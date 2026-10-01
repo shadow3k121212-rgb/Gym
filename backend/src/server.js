@@ -112,6 +112,10 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
     if (!session || session.revoked_at || new Date(session.expires_at).getTime() <= Date.now()) return null;
     const user = await repo.getUserById(payload.userId);
     if (!user || user.status !== "active") return null;
+    const lastSeenAt = new Date(session.last_seen_at).getTime();
+    if (!Number.isFinite(lastSeenAt) || Date.now() - lastSeenAt >= 5 * 60 * 1000) {
+      await repo.touchAuthSession(payload.sessionId, payload.userId);
+    }
     return payload;
   }
 
@@ -272,8 +276,14 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
       }
 
       if (path === "/v1/auth/logout" && req.method === "POST") {
-        const rawRefreshToken = parseCookies(req)[REFRESH_COOKIE];
-        if (rawRefreshToken) await repo.revokeAuthSessionByTokenHash(hashRefreshToken(rawRefreshToken), "logout");
+        const refreshToken = parseCookies(req)[REFRESH_COOKIE];
+        const access = authUser(req);
+        if (access?.sessionId) {
+          await repo.revokeAuthSession(access.userId, access.sessionId, "logout");
+        }
+        if (refreshToken) {
+          await repo.revokeAuthSessionByTokenHash(hashRefreshToken(refreshToken), "logout");
+        }
         return send(res, 204, {}, { ...cors, "x-request-id":id, "set-cookie":clearRefreshCookie() });
       }
 
