@@ -26,7 +26,9 @@ try {
     ["auth_sessions", "token_hash"],
     ["auth_sessions", "expires_at"],
     ["auth_sessions", "revoked_at"],
-    ["auth_sessions", "family_id"]
+    ["auth_sessions", "family_id"],
+    ["auth_sessions", "token_hash"],
+    ["auth_sessions", "expires_at"]
   ];
 
   for (const [table, column] of requiredColumns) {
