@@ -8,7 +8,9 @@ export class PostgresRepository {
     this.pool = new Pool({
       connectionString: config.connectionString ?? process.env.DATABASE_URL,
       max: Number(config.maxConnections ?? process.env.DB_POOL_MAX ?? 10),
-      ssl: config.ssl ?? (process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : undefined)
+      ssl: config.ssl ?? (process.env.NODE_ENV === "production"
+        ? { rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== "false" }
+        : undefined)
     });
   }
 
