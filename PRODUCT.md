@@ -17,17 +17,16 @@ The product should not feel like a generic AI chat wrapped around a workout trac
 
 ## Current audit
 
-The repository initially contained only an MIT license and one initial commit. This branch adds a no-dependency web prototype, workout domain helpers, responsive UI, local persistence, a movement-event contract, a basic PWA shell, documentation, tests, and CI.
+The repository initially contained only an MIT license and one initial commit. This branch now contains the no-dependency web prototype, workout domain helpers, responsive UI, local persistence, authenticated API, PostgreSQL persistence, versioned migrations, movement-event contract, basic PWA shell, documentation, tests, and CI.
 
 ### Known gaps — do not call these complete
 
-- No authentication or server-side data store.
-- Demo metrics include illustrative seed values.
+- No production deployment, managed secrets, backups/restore drill, or operational rollback has been completed.
+- Email verification, account recovery, refresh/session management, and device/session revocation are not production-complete.
 - No real AI model, pose estimation, camera capture, or wearable integration.
-- No database migration system yet because there is no backend database.
 - No end-to-end browser test suite or real device/browser matrix.
-- No privacy policy, terms, analytics consent, billing, or support tooling.
-- The prototype's localStorage state is device/browser-specific and can be cleared.
+- No privacy policy, terms, consent records, billing, or support tooling.
+- The client remains local-first and localStorage is device/browser-specific; cloud sync is optional when the API is configured.
 - Accessibility and performance need a formal audit with assistive technology and target devices.
 
 ## 48-hour execution plan
@@ -50,11 +49,11 @@ The repository initially contained only an MIT license and one initial commit. T
 - Verify PWA caching/update behavior and offline failure states.
 - Add release notes, support contact, and rollback instructions.
 
-### 24–36 hours: production service (only if infrastructure is ready)
-- Implement authenticated API, database migrations, authorization tests, backups, and monitoring.
-- Run dependency/security scans and secret scanning.
-- Add privacy, consent, account deletion, and data export.
-- If backend readiness is absent, launch as a clearly labelled local-first beta rather than pretending cloud sync exists.
+### 24–36 hours: production service hardening (only if infrastructure is ready)
+- Move the existing authenticated API/PostgreSQL foundation into staging with managed secrets and TLS.
+- Complete authorization, backups/restore drills, monitoring, retention, deletion, and rollback evidence.
+- Complete privacy, consent, account recovery, session revocation, and data-export/deletion workflows.
+- Keep the public product positioned as local-first beta until those operational controls are actually evidenced.
 
 ### 36–48 hours: release candidate
 - Run all unit, integration, browser, accessibility, and device checks.
