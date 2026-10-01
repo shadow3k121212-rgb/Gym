@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { hashPassword, verifyPassword, issueAccessToken, verifyAccessToken, extractBearerToken } from "./auth.js";
 import { ValidationError, normalizeEmail, validatePassword, validateSession, validateMovementEvent } from "./validation.js";
+import { decodeSessionCursor, normalizePageLimit, PaginationError } from "./pagination.js";
 
 const JSON_LIMIT = 256 * 1024;
 
@@ -147,9 +148,11 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
       }
 
       if (path === "/v1/sessions" && req.method === "GET") {
-        const limit = new URL(req.url, "http://gym.local").searchParams.get("limit") || "20";
-        const sessions = await repo.listSessions(user.id, limit);
-        return send(res, 200, { sessions }, { ...cors, "x-request-id":id });
+        const searchParams = new URL(req.url, "http://gym.local").searchParams;
+        const limit = normalizePageLimit(searchParams.get("limit"), 20, 100);
+        const before = decodeSessionCursor(searchParams.get("before"));
+        const page = await repo.listSessionsPage(user.id, { limit, before });
+        return send(res, 200, { sessions:page.sessions, nextCursor:page.nextCursor }, { ...cors, "x-request-id":id });
       }
 
       if (path === "/v1/movement-events" && req.method === "POST") {
@@ -162,7 +165,7 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
 
       return okError(res, 404, "Route not found.", id);
     } catch (error) {
-      if (error instanceof ValidationError) return okError(res, 400, error.message, id);
+      if (error instanceof ValidationError || error instanceof PaginationError) return okError(res, 400, error.message, id);
       if (error?.code === "23505") return okError(res, 409, "Resource already exists.", id);
       if (error?.code === "23503") return okError(res, 400, "Referenced resource does not exist.", id);
       if (error?.code === "IDEMPOTENCY_CONFLICT") return okError(res, 409, error.message, id);
