@@ -493,7 +493,11 @@ function libraryView() {
   `);
 }
 
-function settingsView() {\n  return renderShell(renderAccount(state));\n}\n\nfunction render() {
+function settingsView() {
+  return renderShell(renderAccount(state));
+}
+
+function render() {
   const view = state.activeView === "workout" ? workoutView()
     : state.activeView === "progress" ? progressView()
     : state.activeView === "library" ? libraryView()
