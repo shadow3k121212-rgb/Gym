@@ -1,5 +1,5 @@
 import { EXERCISES, SAMPLE_HISTORY, WORKOUT, createEmptySession, getExercise } from "./data.js";
-import { hasApi, hasAuth, syncSession } from "./api.js";
+import { hasApi, hasAuth, listCloudSessions, syncSession } from "./api.js";
 import { renderAccount, wireAccount } from "./account.js";
 import { clearState, defaultState, exportState, loadState, persistState } from "./storage.js";
 import {
@@ -9,6 +9,7 @@ import {
   suggestProgression
 } from "./workout-engine.js";
 import { displayUnit, toDisplayVolume, toDisplayWeight, toKg, weightInputStep } from "./units.js";
+import { mergeHistory } from "./history-sync.js";
 
 const REST_SECONDS = 90;
 let state = loadState();
@@ -32,14 +33,29 @@ function save() {
   return persistState(state);
 }
 
-async function flushSyncQueue() {
-  if (!hasApi() || !hasAuth() || !state.syncQueue?.length) return;
-  for (const session of [...state.syncQueue]) {
-    const result = await syncSession(session);
-    if (!result.ok) break;
-    state.syncQueue = state.syncQueue.filter((item) => item.id !== session.id);
+async function refreshCloudHistory() {
+  if (!hasApi() || !hasAuth()) return;
+  const result = await listCloudSessions(50);
+  if (!result.ok || !Array.isArray(result.body?.sessions)) return;
+  const merged = mergeHistory(state.history, result.body.sessions);
+  if (JSON.stringify(merged) !== JSON.stringify(state.history)) {
+    state.history = merged;
+    state.sampleData = false;
     save();
+    render();
   }
+}
+
+async function flushSyncQueue() {
+  if (hasApi() && hasAuth() && state.syncQueue?.length) {
+    for (const session of [...state.syncQueue]) {
+      const result = await syncSession(session);
+      if (!result.ok) break;
+      state.syncQueue = state.syncQueue.filter((item) => item.id !== session.id);
+      save();
+    }
+  }
+  await refreshCloudHistory();
 }
 
 function todayLabel() {
@@ -637,4 +653,5 @@ if ("serviceWorker" in navigator) {
 
 render();
 window.addEventListener("online", () => { void flushSyncQueue(); });
+window.addEventListener("gym:auth-changed", () => { void flushSyncQueue(); });
 void flushSyncQueue();
