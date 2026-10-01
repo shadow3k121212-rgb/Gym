@@ -155,3 +155,27 @@ test("classifies retryable and permanent cloud failures", async () => {
     globalThis.__GYM_CONFIG__ = originalConfig;
   }
 });
+test("classifies network failures as retryable", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalStorageDescriptor = installStorage(new Map([
+    ["gym:access-token", "token"],
+    ["gym:auth-user-id", "123e4567-e89b-12d3-a456-426614174000"]
+  ]));
+  const originalConfig = globalThis.__GYM_CONFIG__;
+  globalThis.__GYM_CONFIG__ = { apiBaseUrl:"https://api.example.test" };
+  globalThis.fetch = async () => {
+    throw new TypeError("network offline");
+  };
+
+  try {
+    const module = await import("../src/api.js?offline-test=" + Date.now());
+    const result = await module.listCloudSessions(50);
+    assert.equal(result.ok, false);
+    assert.equal(result.retryable, true);
+    assert.equal(result.authRequired, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreStorage(originalStorageDescriptor);
+    globalThis.__GYM_CONFIG__ = originalConfig;
+  }
+});
