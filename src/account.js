@@ -1,4 +1,4 @@
-import { clearAuth, hasApi, hasAuth, login, register } from "./api.js";
+import { hasApi, hasAuth, login, logout, register } from "./api.js";
 
 export function renderAccount(state) {
   const connected = hasApi() && hasAuth();
@@ -31,8 +31,11 @@ export function renderAccount(state) {
 }
 
 export function wireAccount({ render, announce }) {
-  document.querySelectorAll("[data-account-action=\"sign-out\"]").forEach((button) => button.addEventListener("click", () => {
-    clearAuth(); render(); announce("Signed out.");
+  document.querySelectorAll("[data-account-action=\"sign-out\"]").forEach((button) => button.addEventListener("click", async () => {
+    button.disabled = true;
+    const result = await logout();
+    render();
+    announce(result.ok ? "Signed out." : "Signed out locally. The server session may already be expired.");
   }));
   document.querySelectorAll("[data-account-action=\"login\"]").forEach((button) => button.addEventListener("click", async () => {
     const email = document.querySelector("#auth-email")?.value.trim();
