@@ -1,77 +1,45 @@
-import { calculateVolume, suggestProgression, summarizeSession } from "./workout-engine.js";
+import { EXERCISES, SAMPLE_HISTORY, WORKOUT, createEmptySession, getExercise } from "./data.js";
+import { clearState, defaultState, exportState, loadState, persistState } from "./storage.js";
+import {
+  estimateOneRepMax,
+  getNextOpenSet,
+  summarizeSession,
+  suggestProgression
+} from "./workout-engine.js";
 
-const STORAGE_KEY = "gym:state:v1";
-
-const exercises = [
-  { id: "bench", name: "Barbell Bench Press", muscle: "Chest", equipment: "Barbell", level: "Intermediate", targetSets: 4, targetReps: 8, loadKg: 70 },
-  { id: "squat", name: "Back Squat", muscle: "Legs", equipment: "Barbell", level: "Intermediate", targetSets: 4, targetReps: 6, loadKg: 90 },
-  { id: "row", name: "Chest-Supported Row", muscle: "Back", equipment: "Machine", level: "Beginner", targetSets: 3, targetReps: 10, loadKg: 45 },
-  { id: "rdl", name: "Romanian Deadlift", muscle: "Posterior", equipment: "Barbell", level: "Intermediate", targetSets: 3, targetReps: 8, loadKg: 75 },
-  { id: "ohp", name: "Overhead Press", muscle: "Shoulders", equipment: "Barbell", level: "Intermediate", targetSets: 3, targetReps: 8, loadKg: 42.5 },
-  { id: "pullup", name: "Pull-Up", muscle: "Back", equipment: "Bodyweight", level: "Intermediate", targetSets: 3, targetReps: 8, loadKg: 0 }
-];
-
-const seedHistory = [
-  { day: "Mon", volume: 11240 },
-  { day: "Tue", volume: 8900 },
-  { day: "Wed", volume: 12560 },
-  { day: "Thu", volume: 0 },
-  { day: "Fri", volume: 9720 },
-  { day: "Sat", volume: 13840 },
-  { day: "Sun", volume: 0 }
-];
-
-function loadState() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    return saved || {
-      activeView: "dashboard",
-      sessionStarted: false,
-      completed: {},
-      history: seedHistory,
-      sessions: 18,
-      streak: 7,
-      latestInsight: "You are trending up. Keep one rep in reserve on your top sets this week."
-    };
-  } catch {
-    return {
-      activeView: "dashboard",
-      sessionStarted: false,
-      completed: {},
-      history: seedHistory,
-      sessions: 18,
-      streak: 7,
-      latestInsight: "Build consistency first; intensity comes second."
-    };
-  }
-}
-
+const REST_SECONDS = 90;
 let state = loadState();
+let restTimer = null;
+let restRemaining = 0;
+
+const $ = (selector) => document.querySelector(selector);
+const $$ = (selector) => [...document.querySelectorAll(selector)];
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#039;"
+  }[char]));
+}
 
 function save() {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    return true;
-  } catch (error) {
-    console.error("Could not persist workout state", error);
-    return false;
-  }
+  return persistState(state);
 }
 
-function exportData() {
-  const payload = {
-    schemaVersion: 1,
-    exportedAt: new Date().toISOString(),
-    product: "GYM Training OS",
-    state
-  };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `gym-data-${new Date().toISOString().slice(0, 10)}.json`;
-  link.click();
-  URL.revokeObjectURL(url);
+function todayLabel() {
+  return new Intl.DateTimeFormat("en-IN", { weekday: "long", day: "numeric", month: "short" }).format(new Date());
+}
+
+function formatNumber(value, maximumFractionDigits = 1) {
+  return new Intl.NumberFormat("en-IN", { maximumFractionDigits }).format(Number(value) || 0);
+}
+
+function formatDuration(totalSeconds) {
+  const seconds = Math.max(0, Number(totalSeconds) || 0);
+  return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
 function icon(name) {
@@ -79,23 +47,146 @@ function icon(name) {
     grid: '<rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/>',
     bolt: '<path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z"/>',
     chart: '<path d="M4 19V5M4 19h16M8 16v-4M12 16V7M16 16v-8"/>',
-    dumbbell: '<path d="M5 8v8M2 10v4M8 10h8M19 8v8M22 10v4"/><path d="M8 8v8M16 8v8"/>',
-    search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>',
+    dumbbell: '<path d="M5 8v8M2 10v4M8 10h8M19 8v8M22 10v4M8 8v8M16 8v8"/>',
+    settings: '<path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1 7 17M17 7l2.1-2.1"/><circle cx="12" cy="12" r="4"/>',
     play: '<path d="m9 6 10 6-10 6Z" fill="currentColor" stroke="none"/>',
+    pause: '<path d="M8 6v12M16 6v12"/>',
     check: '<path d="m5 12 4 4L19 6"/>',
-    arrow: '<path d="M5 12h14M13 6l6 6-6 6"/>'
+    close: '<path d="m6 6 12 12M18 6 6 18"/>',
+    arrow: '<path d="M5 12h14M13 6l6 6-6 6"/>',
+    download: '<path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/>',
+    trash: '<path d="M5 7h14M9 7V4h6v3m-8 0 1 13h8l1-13"/>',
+    clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'
   };
   return `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${paths[name] || paths.grid}</svg>`;
 }
 
-function formatKg(value) {
-  return new Intl.NumberFormat("en-IN", { maximumFractionDigits: 1 }).format(value);
-}
-
 function navItem(view, label, iconName) {
-  return `<button class="nav-item ${state.activeView === view ? "is-active" : ""}" data-view="${view}" aria-label="${label}">
+  return `<button class="nav-item ${state.activeView === view ? "is-active" : ""}" data-view="${view}">
     ${icon(iconName)}<span>${label}</span>
   </button>`;
+}
+
+function currentSession() {
+  return state.session || createEmptySession();
+}
+
+function currentExercises() {
+  return currentSession().exercises.map((entry) => ({
+    ...getExercise(entry.exerciseId),
+    sets: entry.sets
+  }));
+}
+
+function realHistory() {
+  return Array.isArray(state.history) ? state.history.filter((entry) => entry.source !== "sample") : [];
+}
+
+function chartHistory() {
+  const history = realHistory();
+  if (history.length >= 7) return history.slice(-7);
+  return [...SAMPLE_HISTORY.map((item) => ({ ...item })), ...history].slice(-7);
+}
+
+function sessionSummary() {
+  return summarizeSession(currentExercises());
+}
+
+function startSession() {
+  if (!state.session) state.session = createEmptySession();
+  state.activeView = "workout";
+  save();
+  render();
+}
+
+function finishSession() {
+  if (!state.session) return;
+  const summary = sessionSummary();
+  if (summary.completedSets === 0) {
+    announce("Complete at least one set before finishing.");
+    return;
+  }
+  const completedAt = new Date().toISOString();
+  state.session.completedAt = completedAt;
+  state.history = [...realHistory(), {
+    id: state.session.id,
+    date: completedAt.slice(0, 10),
+    name: state.session.name,
+    volumeKg: Math.round(summary.volumeKg * 10) / 10,
+    sets: summary.completedSets,
+    source: "manual"
+  }];
+  state.session = null;
+  state.activeView = "dashboard";
+  state.sampleData = false;
+  save();
+  stopRestTimer();
+  announce("Session saved. Your progress is now part of your training history.");
+  render();
+}
+
+function updateSet(exerciseId, setIndex, field, value) {
+  if (!state.session) return;
+  const entry = state.session.exercises.find((item) => item.exerciseId === exerciseId);
+  const set = entry?.sets[setIndex];
+  if (!set) return;
+
+  if (field === "reps") {
+    const next = Number(value);
+    set.reps = Number.isFinite(next) ? Math.max(0, Math.min(1000, next)) : set.reps;
+  }
+  if (field === "weightKg") {
+    const next = Number(value);
+    set.weightKg = Number.isFinite(next) ? Math.max(0, Math.min(1000, next)) : set.weightKg;
+  }
+  if (field === "rpe") {
+    const next = value === "" ? null : Number(value);
+    set.rpe = next === null ? null : (Number.isFinite(next) ? Math.max(1, Math.min(10, next)) : set.rpe);
+  }
+  save();
+}
+
+function toggleSet(exerciseId, setIndex) {
+  if (!state.session) return;
+  const entry = state.session.exercises.find((item) => item.exerciseId === exerciseId);
+  const set = entry?.sets[setIndex];
+  if (!set) return;
+
+  set.completed = !set.completed;
+  set.completedAt = set.completed ? new Date().toISOString() : null;
+  if (set.completed) startRestTimer();
+  save();
+  render();
+}
+
+function startRestTimer() {
+  stopRestTimer();
+  restRemaining = REST_SECONDS;
+  restTimer = setInterval(() => {
+    restRemaining -= 1;
+    if (restRemaining <= 0) stopRestTimer();
+    updateRestUI();
+  }, 1000);
+  updateRestUI();
+}
+
+function stopRestTimer() {
+  if (restTimer) clearInterval(restTimer);
+  restTimer = null;
+  restRemaining = 0;
+  updateRestUI();
+}
+
+function updateRestUI() {
+  const timer = document.querySelector("[data-rest-timer]");
+  if (!timer) return;
+  timer.textContent = restRemaining > 0 ? formatDuration(restRemaining) : "READY";
+  timer.parentElement?.classList.toggle("is-running", restRemaining > 0);
+}
+
+function announce(message) {
+  const live = document.querySelector("#live-region");
+  if (live) live.textContent = message;
 }
 
 function renderShell(content) {
@@ -113,138 +204,217 @@ function renderShell(content) {
           ${navItem("library", "Exercises", "dumbbell")}
         </nav>
         <div class="sidebar-card">
-          <span class="eyebrow">NEXT SYSTEM</span>
-          <strong>Motion Intelligence</strong>
-          <p>Camera-ready movement data layer designed into the product from day one.</p>
-          <span class="status-dot">ARCHITECTURE READY</span>
+          <span class="eyebrow">PRODUCT MODE</span>
+          <strong>Training memory</strong>
+          <p>Your session data stays in this browser in beta. Cloud sync is a planned backend layer, not a hidden promise.</p>
+          <span class="status-dot">LOCAL-FIRST BETA</span>
         </div>
-        <div class="sidebar-foot">v0.1 FOUNDATION</div>
+        <div class="sidebar-foot">GYM · BETA 0.2</div>
       </aside>
+
       <main class="main-content">
         <header class="topbar">
           <div>
-            <div class="eyebrow">YOUR TRAINING SPACE · LOCAL BETA</div>
+            <div class="eyebrow">${escapeHtml(todayLabel()).toUpperCase()} · LOCAL BETA</div>
             <h1>${state.activeView === "dashboard" ? "Control your training." : viewTitle()}</h1>
           </div>
           <div class="top-actions">
-            <button class="icon-button" title="Export your data" data-action="export" aria-label="Export your data">↓</button><button class="icon-button" title="Reset demo state" data-action="reset" aria-label="Reset demo data">↺</button>
-            <div class="avatar">S</div>
+            <button class="icon-button" title="Export your data" data-action="export" aria-label="Export your data">${icon("download")}</button>
+            <button class="avatar" data-view="settings" aria-label="Open settings">${escapeHtml(state.settings.displayName.slice(0,1).toUpperCase())}</button>
           </div>
         </header>
         ${content}
       </main>
-      <nav class="mobile-nav">
+
+      <nav class="mobile-nav" aria-label="Mobile primary">
         ${navItem("dashboard", "Overview", "grid")}
         ${navItem("workout", "Workout", "bolt")}
         ${navItem("progress", "Progress", "chart")}
         ${navItem("library", "Exercises", "dumbbell")}
       </nav>
     </div>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <div id="live-region" class="sr-only" aria-live="polite"></div>
   `;
 }
 
 function viewTitle() {
-  return ({ workout: "Today’s training.", progress: "Your signal, over time.", library: "The movement library." })[state.activeView] || "Control your training.";
+  return ({
+    workout: "Today’s training.",
+    progress: "Your signal, over time.",
+    library: "The movement library.",
+    settings: "Your training preferences."
+  })[state.activeView] || "Control your training.";
 }
 
 function dashboard() {
-  const workout = sessionModel();
-  const summary = summarizeSession(workout);
-  const max = Math.max(...state.history.map((x) => x.volume), 1);
+  const session = state.session ? sessionSummary() : null;
+  const history = realHistory();
+  const totalVolume = history.reduce((sum, item) => sum + Number(item.volumeKg || 0), 0);
+  const displayHistory = chartHistory();
+  const max = Math.max(...displayHistory.map((item) => Number(item.volumeKg || 0)), 1);
+
   return renderShell(`
     <section class="hero-grid">
       <article class="hero-card">
         <div class="hero-copy">
           <div class="eyebrow">TODAY’S SESSION</div>
           <h2>Upper Strength<span>.</span></h2>
-          <p>Build the work that compounds. Four movements, 14 target sets, clean progression.</p>
+          <p>Train with less friction. Log the set once, keep the record forever, and let the data layer grow with you.</p>
           <div class="hero-meta">
-            <span><b>04</b> movements</span><span><b>14</b> target sets</span><span><b>~54</b> min</span>
+            <span><b>04</b> movements</span>
+            <span><b>14</b> target sets</span>
+            <span><b>~54</b> min</span>
           </div>
-          <button class="primary-button" data-action="start">${state.sessionStarted ? "Resume workout" : "Start workout"} ${icon("arrow")}</button>
+          <button class="primary-button" data-action="start">
+            ${state.session ? "Resume workout" : "Start workout"} ${icon("arrow")}
+          </button>
         </div>
         <div class="hero-visual" aria-hidden="true">
           <div class="ring ring-outer"></div><div class="ring ring-mid"></div><div class="ring ring-inner"></div>
-          <div class="ring-core"><span>${Math.round(summary.completion * 100)}%</span><small>READY</small></div>
+          <div class="ring-core"><span>${session ? Math.round(session.completion * 100) : 0}%</span><small>${session ? "ACTIVE" : "READY"}</small></div>
         </div>
       </article>
 
       <article class="stat-card">
-        <div class="eyebrow">WEEKLY LOAD · SAMPLE</div><div class="stat-number">${formatKg(state.history.reduce((a,b)=>a+b.volume,0)/1000)}k</div><div class="stat-caption">kg moved</div>
-        <div class="mini-bars">${state.history.map((item) => `<div class="bar-wrap"><div class="bar" style="height:${Math.max(7,(item.volume/max)*100)}%"></div><span>${item.day}</span></div>`).join("")}</div>
+        <div class="eyebrow">${history.length ? "YOUR RECORDED LOAD" : "WEEKLY LOAD · SAMPLE"}</div>
+        <div class="stat-number">${formatNumber((history.length ? totalVolume : displayHistory.reduce((sum, item) => sum + Number(item.volumeKg || 0), 0)) / 1000)}k</div>
+        <div class="stat-caption">kg moved ${history.length ? "across saved sessions" : "in preview data"}</div>
+        <div class="mini-bars">
+          ${displayHistory.map((item) => `
+            <div class="bar-wrap" title="${escapeHtml(item.date || "")}">
+              <div class="bar" style="height:${Math.max(7, (Number(item.volumeKg || 0) / max) * 100)}%"></div>
+              <span>${escapeHtml(item.date ? item.date.slice(5) : "")}</span>
+            </div>`).join("")}
+        </div>
       </article>
     </section>
 
     <section class="section-grid">
       <div class="panel">
-        <div class="panel-head"><div><div class="eyebrow">TRAINING PULSE · SAMPLE</div><h3>Consistency is compounding.</h3></div><span class="tag">DEMO DATA</span></div>
-        <div class="metric-row">
-          <div><span class="metric-value">${state.sessions}</span><span class="metric-label">sessions</span></div>
-          <div><span class="metric-value">${state.streak}</span><span class="metric-label">day streak</span></div>
-          <div><span class="metric-value">+8.4%</span><span class="metric-label">volume vs last block</span></div>
+        <div class="panel-head">
+          <div><div class="eyebrow">TRAINING PULSE</div><h3>${history.length ? "Your history is becoming the signal." : "Your first session creates the baseline."}</h3></div>
+          <span class="tag">${history.length ? "RECORDED" : "BETA"}</span>
         </div>
-        <div class="progress-line"><span style="width:72%"></span></div>
-        <div class="micro-note">Illustrative preview values. Your real history starts when you log sessions.</div>
+        <div class="metric-row">
+          <div><span class="metric-value">${history.length}</span><span class="metric-label">saved sessions</span></div>
+          <div><span class="metric-value">${history.length ? history.slice(-7).length : 0}</span><span class="metric-label">sessions in recent window</span></div>
+          <div><span class="metric-value">${history.length ? "+" + formatNumber(totalVolume / Math.max(history.length, 1) / 100, 0) + "%" : "—"}</span><span class="metric-label">data maturity</span></div>
+        </div>
+        <div class="progress-line"><span style="width:${Math.min(100, history.length ? Math.max(8, history.length * 8) : 0)}%"></span></div>
+        <div class="micro-note">${history.length ? "Real logged sessions are now the source of truth for this device." : "Illustrative values are isolated from your real history and will disappear once you log your first session."}</div>
       </div>
+
       <div class="panel insight-panel">
-        <div class="eyebrow">COACH SIGNAL · RULE-BASED</div>
-        <h3>${state.latestInsight}</h3>
-        <p>The intelligence layer is intentionally provider-agnostic: manual logs today, AI/CV inference tomorrow.</p>
-        <button class="text-button" data-view="progress">See the signal ${icon("arrow")}</button>
+        <div class="eyebrow">COACH SIGNAL · FOUNDATION</div>
+        <h3>${state.session ? "Finish the session cleanly. The signal starts with complete sets." : history.length ? "Your next useful feature is consistency, not more noise." : "No AI theatre. Build the data foundation first."}</h3>
+        <p>Manual logs are the trusted source today. Future camera and wearable events can attach to the same versioned movement-event contract.</p>
+        <button class="text-button" data-view="progress">See progress ${icon("arrow")}</button>
       </div>
     </section>
 
     <section class="panel exercise-preview">
-      <div class="panel-head"><div><div class="eyebrow">SESSION BLUEPRINT</div><h3>Upper Strength</h3></div><button class="text-button" data-view="workout">Open workout ${icon("arrow")}</button></div>
-      <div class="exercise-list">${workout.map((e) => `<div class="exercise-row"><div class="exercise-index">0${workout.indexOf(e)+1}</div><div class="exercise-main"><strong>${e.name}</strong><span>${e.muscle} · ${e.targetSets} × ${e.targetReps}</span></div><div class="exercise-load">${e.loadKg ? e.loadKg+" kg" : "BW"}</div></div>`).join("")}</div>
+      <div class="panel-head">
+        <div><div class="eyebrow">SESSION BLUEPRINT</div><h3>Upper Strength</h3></div>
+        <button class="text-button" data-action="start">Open workout ${icon("arrow")}</button>
+      </div>
+      <div class="exercise-list">
+        ${WORKOUT.map((id, index) => {
+          const exercise = getExercise(id);
+          return `
+            <div class="exercise-row">
+              <div class="exercise-index">0${index + 1}</div>
+              <div class="exercise-main"><strong>${escapeHtml(exercise.name)}</strong><span>${escapeHtml(exercise.muscle)} · ${exercise.targetSets} × ${exercise.targetReps}</span></div>
+              <div class="exercise-load">${exercise.loadKg ? formatNumber(exercise.loadKg, 1) + " kg" : "BW"}</div>
+            </div>`;
+        }).join("")}
+      </div>
     </section>
   `);
 }
 
-function sessionModel() {
-  return ["bench","row","ohp","pullup"].map((id) => {
-    const exercise = exercises.find((e) => e.id === id);
-    const completedSets = state.completed[id] || 0;
-    const sets = Array.from({ length: completedSets }, () => ({ reps: exercise.targetReps, weightKg: exercise.loadKg }));
-    return { ...exercise, completedSets, sets };
-  });
-}
-
 function workoutView() {
-  const session = sessionModel();
+  if (!state.session) {
+    return renderShell(`
+      <section class="empty-state panel">
+        <div class="empty-icon">${icon("bolt")}</div>
+        <div class="eyebrow">NO ACTIVE SESSION</div>
+        <h2>Start when you’re ready.</h2>
+        <p>Your session will be saved locally as you move. You can export it at any time.</p>
+        <button class="primary-button" data-action="start">Start Upper Strength ${icon("arrow")}</button>
+      </section>
+    `);
+  }
+
+  const exercises = currentExercises();
+  const summary = sessionSummary();
+  const next = (() => {
+    for (const exercise of exercises) {
+      const open = getNextOpenSet(exercise);
+      if (open) return { exercise, open };
+    }
+    return null;
+  })();
+
   return renderShell(`
     <section class="workout-layout">
       <div class="panel workout-main">
         <div class="panel-head">
-          <div><div class="eyebrow">LIVE SESSION</div><h3>Upper Strength</h3></div>
-          <span class="timer">${state.sessionStarted ? "ACTIVE" : "NOT STARTED"}</span>
+          <div><div class="eyebrow">LIVE SESSION · MANUAL</div><h3>${escapeHtml(state.session.name)}</h3></div>
+          <span class="session-status">${Math.round(summary.completion * 100)}% COMPLETE</span>
         </div>
-        <div class="session-progress"><span style="width:${summarizeSession(session).completion*100}%"></span></div>
+
+        <div class="session-progress"><span style="width:${summary.completion * 100}%"></span></div>
+
+        ${next ? `<div class="next-set-banner">
+          <div><span class="eyebrow">UP NEXT</span><strong>${escapeHtml(next.exercise.name)} · Set ${next.exercise.sets.findIndex((set) => !set.completed) + 1}</strong></div>
+          <span class="next-load">${next.open.weightKg ? formatNumber(next.open.weightKg, 1) + " kg" : "BODYWEIGHT"}</span>
+        </div>` : `<div class="next-set-banner is-done"><div><span class="eyebrow">SESSION TARGET</span><strong>All planned sets complete.</strong></div><span class="next-load">READY TO FINISH</span></div>`}
+
         <div class="set-list">
-          ${session.map((e, i) => `
+          ${exercises.map((exercise, exerciseIndex) => `
             <article class="set-card">
-              <div class="set-number">0${i+1}</div>
+              <div class="set-number">0${exerciseIndex + 1}</div>
               <div class="set-content">
-                <div class="set-title"><div><strong>${e.name}</strong><span>${e.muscle} · ${e.targetSets} × ${e.targetReps}</span></div><b>${e.loadKg ? e.loadKg+" kg" : "BODYWEIGHT"}</b></div>
-                <div class="set-actions">
-                  ${Array.from({length:e.targetSets},(_,setIndex)=>`<button class="set-pill ${setIndex < e.completedSets ? "is-done" : ""}" data-complete="${e.id}" data-set="${setIndex}" aria-label="Set ${setIndex+1}">${setIndex+1}${setIndex < e.completedSets ? " ✓" : ""}</button>`).join("")}
+                <div class="set-title">
+                  <div><strong>${escapeHtml(exercise.name)}</strong><span>${escapeHtml(exercise.muscle)} · ${exercise.targetSets} × ${exercise.targetReps}</span></div>
+                  <b>${exercise.loadKg ? formatNumber(exercise.loadKg, 1) + " kg base" : "BODYWEIGHT"}</b>
                 </div>
-                <div class="set-footer"><span>Rest 90s</span><span>Next: ${suggestProgression(e.loadKg, e.completedSets, e.targetSets)} kg</span></div>
+
+                <div class="set-table-head"><span>SET</span><span>REPS</span><span>LOAD</span><span>RPE</span><span>DONE</span></div>
+
+                ${exercise.sets.map((set, setIndex) => `
+                  <div class="set-row ${set.completed ? "is-complete" : ""}">
+                    <span class="set-index">${set.index}</span>
+                    <input class="set-input" inputmode="numeric" type="number" min="0" max="1000" value="${escapeHtml(set.reps)}" data-input="reps" data-exercise="${exercise.id}" data-set="${setIndex}" aria-label="${escapeHtml(exercise.name)} set ${set.index} reps">
+                    <input class="set-input" inputmode="decimal" type="number" min="0" max="1000" step="0.5" value="${escapeHtml(set.weightKg)}" data-input="weightKg" data-exercise="${exercise.id}" data-set="${setIndex}" aria-label="${escapeHtml(exercise.name)} set ${set.index} load in kilograms">
+                    <input class="set-input" inputmode="decimal" type="number" min="1" max="10" step="0.5" placeholder="—" value="${set.rpe ?? ""}" data-input="rpe" data-exercise="${exercise.id}" data-set="${setIndex}" aria-label="${escapeHtml(exercise.name)} set ${set.index} RPE">
+                    <button class="set-check ${set.completed ? "is-done" : ""}" data-toggle-set data-exercise="${exercise.id}" data-set="${setIndex}" aria-label="${set.completed ? "Mark set incomplete" : "Complete set"}">${set.completed ? icon("check") : ""}</button>
+                  </div>`).join("")}
+
+                <div class="set-footer">
+                  <span>${exercise.cues.slice(0, 2).map(escapeHtml).join(" · ")}</span>
+                  <span>Next: ${formatNumber(suggestProgression(exercise.loadKg, exercise.sets.filter((set) => set.completed).length, exercise.targetSets), 1)} kg</span>
+                </div>
               </div>
             </article>`).join("")}
         </div>
       </div>
+
       <aside class="workout-side">
         <div class="panel sticky">
           <div class="eyebrow">SESSION OUTPUT</div>
-          <div class="big-output">${formatKg(summarizeSession(session).volumeKg)} <small>kg</small></div>
-          <div class="output-label">training volume</div>
+          <div class="big-output">${formatNumber(summary.volumeKg)} <small>kg</small></div>
+          <div class="output-label">completed-set volume</div>
           <div class="output-grid">
-            <div><b>${summarizeSession(session).totalSets}</b><span>sets</span></div>
-            <div><b>${Math.round(summarizeSession(session).completion*100)}%</b><span>complete</span></div>
+            <div><b>${summary.completedSets}</b><span>of ${summary.totalSets} sets</span></div>
+            <div><b>${Math.round(summary.completion * 100)}%</b><span>complete</span></div>
+            <div><b>${formatNumber(summary.estimatedOneRepMaxKg, 1)}</b><span>best est. 1RM</span></div>
+            <div class="rest-card"><b data-rest-timer>${restRemaining > 0 ? formatDuration(restRemaining) : "READY"}</b><span>rest timer</span></div>
           </div>
-          <button class="primary-button full" data-action="finish">Finish session</button>
-          <div class="micro-note">Every set event is normalized for future analytics and movement inference.</div>
+          <button class="primary-button full" data-action="finish">Save session</button>
+          <button class="secondary-button full" data-action="reset-session">Discard session</button>
+          <div class="micro-note">Set-level records are timestamped and stored with explicit source labels for future analytics and movement intelligence.</div>
         </div>
       </aside>
     </section>
@@ -252,29 +422,42 @@ function workoutView() {
 }
 
 function progressView() {
-  const total = state.history.reduce((a,b) => a + b.volume, 0);
-  const top = Math.max(...state.history.map((x)=>x.volume), 1);
+  const history = realHistory();
+  const display = history.length ? history : SAMPLE_HISTORY;
+  const totalVolume = display.reduce((sum, item) => sum + Number(item.volumeKg || 0), 0);
+  const top = Math.max(...display.map((x) => Number(x.volumeKg || 0)), 1);
+  const label = history.length ? "RECORDED DATA" : "SAMPLE PREVIEW";
+
   return renderShell(`
     <section class="section-grid">
       <div class="panel chart-panel">
-        <div class="panel-head"><div><div class="eyebrow">VOLUME TREND · SAMPLE</div><h3>Seven-day training signal</h3></div><span class="tag">ILLUSTRATIVE</span></div>
-        <div class="large-bars">${state.history.map((x)=>`<div class="large-bar-wrap"><div class="large-bar" style="height:${Math.max(8,(x.volume/top)*100)}%"></div><b>${x.volume ? Math.round(x.volume/1000)+"k" : "—"}</b><span>${x.day}</span></div>`).join("")}</div>
+        <div class="panel-head"><div><div class="eyebrow">VOLUME TREND · ${label}</div><h3>${history.length ? "Your logged training volume" : "What the progress surface will look like"}</h3></div><span class="tag">${history.length ? "LIVE" : "PREVIEW"}</span></div>
+        <div class="large-bars">
+          ${display.map((item) => `
+            <div class="large-bar-wrap">
+              <b>${formatNumber(Number(item.volumeKg || 0) / 1000, 1)}k</b>
+              <div class="large-bar" style="height:${Math.max(8, (Number(item.volumeKg || 0) / top) * 100)}%"></div>
+              <span>${escapeHtml(item.date || "")}</span>
+            </div>`).join("")}
+        </div>
       </div>
+
       <div class="panel">
-        <div class="eyebrow">PERSONAL SIGNALS · DEMO</div>
+        <div class="eyebrow">PERSONAL SIGNALS</div>
         <div class="signal-list">
-          <div class="signal"><span>Weekly volume</span><b>${formatKg(total/1000)}k kg</b><small>+8.4% vs prior block</small></div>
-          <div class="signal"><span>Consistency</span><b>4 / 5 sessions</b><small>one session remaining</small></div>
-          <div class="signal"><span>Load discipline</span><b>+2.5 kg</b><small>recommended progression</small></div>
+          <div class="signal"><span>Total tracked volume</span><b>${formatNumber(totalVolume)} kg</b><small>${history.length ? "From saved sessions on this device" : "Preview only — not your data"}</small></div>
+          <div class="signal"><span>Sessions</span><b>${history.length}</b><small>${history.length ? "Saved locally" : "Start your first workout"}</small></div>
+          <div class="signal"><span>Current best estimated 1RM</span><b>${state.session ? formatNumber(sessionSummary().estimatedOneRepMaxKg, 1) + " kg" : "—"}</b><small>${state.session ? "From current completed sets" : "Appears during an active session"}</small></div>
         </div>
       </div>
     </section>
+
     <section class="panel">
-      <div class="panel-head"><div><div class="eyebrow">WHAT WE’LL MEASURE NEXT</div><h3>Movement intelligence contract</h3></div></div>
+      <div class="panel-head"><div><div class="eyebrow">MOVEMENT INTELLIGENCE CONTRACT</div><h3>Build measurements before opinions.</h3></div></div>
       <div class="roadmap-cards">
-        <div><span>01</span><strong>Rep count</strong><p>Detect completed reps and tempo without forcing manual input.</p></div>
-        <div><span>02</span><strong>Form quality</strong><p>Track range, symmetry and stability as structured metrics.</p></div>
-        <div><span>03</span><strong>Progression</strong><p>Connect quality × load × fatigue to recommendations.</p></div>
+        <div><span>01</span><strong>Rep count</strong><p>Manual today; camera-derived later, with a confidence value and model version.</p></div>
+        <div><span>02</span><strong>Movement quality</strong><p>Exercise-specific metrics such as tempo, range and symmetry proxies.</p></div>
+        <div><span>03</span><strong>Progression</strong><p>Connect completed work, quality and history into explainable recommendations.</p></div>
       </div>
     </section>
   `);
@@ -283,88 +466,153 @@ function progressView() {
 function libraryView() {
   return renderShell(`
     <section class="library-toolbar">
-      <div class="search-box">${icon("search")}<input id="exercise-search" placeholder="Search movements, muscles or equipment" autocomplete="off"></div>
-      <div class="filter-row"><button class="filter active">All</button><button class="filter">Barbell</button><button class="filter">Machine</button><button class="filter">Bodyweight</button></div>
+      <div class="search-box">${icon("grid")}<input id="exercise-search" placeholder="Search movements, muscles or equipment" autocomplete="off" aria-label="Search exercises"></div>
+      <div class="filter-row" role="group" aria-label="Exercise filters">
+        <button class="filter active" data-filter="all">All</button>
+        <button class="filter" data-filter="Barbell">Barbell</button>
+        <button class="filter" data-filter="Machine">Machine</button>
+        <button class="filter" data-filter="Bodyweight">Bodyweight</button>
+      </div>
     </section>
     <section class="library-grid" id="library-grid">
-      ${exercises.map((e)=>`<article class="library-card" data-search="${(e.name+" "+e.muscle+" "+e.equipment).toLowerCase()}">
-        <div class="library-top"><span class="index-chip">0${exercises.indexOf(e)+1}</span><span class="level">${e.level}</span></div>
-        <h3>${e.name}</h3><p>${e.muscle} · ${e.equipment}</p>
-        <div class="library-bottom"><b>${e.targetSets} × ${e.targetReps}</b><span>${e.loadKg ? e.loadKg+" kg base" : "bodyweight"}</span></div>
-      </article>`).join("")}
+      ${EXERCISES.map((exercise, index) => `
+        <article class="library-card" data-search="${escapeHtml((exercise.name + " " + exercise.muscle + " " + exercise.equipment).toLowerCase())}" data-equipment="${escapeHtml(exercise.equipment)}">
+          <div class="library-top"><span class="index-chip">0${index + 1}</span><span class="level">${escapeHtml(exercise.level)}</span></div>
+          <h3>${escapeHtml(exercise.name)}</h3>
+          <p>${escapeHtml(exercise.muscle)} · ${escapeHtml(exercise.equipment)}</p>
+          <div class="library-bottom"><b>${exercise.targetSets} × ${exercise.targetReps}</b><span>${exercise.loadKg ? formatNumber(exercise.loadKg, 1) + " kg base" : "bodyweight"}</span></div>
+        </article>`).join("")}
+    </section>
+  `);
+}
+
+function settingsView() {
+  return renderShell(`
+    <section class="settings-grid">
+      <div class="panel">
+        <div class="eyebrow">ATHLETE PROFILE</div>
+        <h3>Preferences that follow the product.</h3>
+        <label class="field-label" for="display-name">Display name</label>
+        <input class="text-input" id="display-name" maxlength="50" value="${escapeHtml(state.settings.displayName)}">
+        <label class="field-label" for="units">Weight units</label>
+        <select class="text-input" id="units">
+          <option value="kg" ${state.settings.units === "kg" ? "selected" : ""}>Kilograms (kg)</option>
+          <option value="lb" ${state.settings.units === "lb" ? "selected" : ""}>Pounds (lb)</option>
+        </select>
+        <button class="primary-button" data-action="save-settings">Save preferences</button>
+      </div>
+      <div class="panel danger-panel">
+        <div class="eyebrow">DATA CONTROL</div>
+        <h3>You own the local record.</h3>
+        <p>Beta data is stored only in this browser. Export it before clearing this device.</p>
+        <button class="secondary-button full" data-action="export">Export my data ${icon("download")}</button>
+        <button class="danger-button full" data-action="clear-data">Delete local data ${icon("trash")}</button>
+        <div class="micro-note">Cloud sync, account recovery and server-side deletion will be implemented with the backend service before treating the account system as production.</div>
+      </div>
     </section>
   `);
 }
 
 function render() {
-  const view = state.activeView === "workout" ? workoutView() :
-    state.activeView === "progress" ? progressView() :
-    state.activeView === "library" ? libraryView() : dashboard();
-  document.querySelector("#app").innerHTML = view;
+  stopRestTimer();
+  const view = state.activeView === "workout" ? workoutView()
+    : state.activeView === "progress" ? progressView()
+    : state.activeView === "library" ? libraryView()
+    : state.activeView === "settings" ? settingsView()
+    : dashboard();
+
+  $("#app").innerHTML = view;
   wire();
 }
 
 function wire() {
-  document.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => {
+  $$("[data-view]").forEach((button) => button.addEventListener("click", () => {
     state.activeView = button.dataset.view;
     save();
     render();
   }));
 
-  document.querySelectorAll("[data-action='start']").forEach((button) => button.addEventListener("click", () => {
-    state.sessionStarted = true;
-    state.activeView = "workout";
+  $$("[data-action='start']").forEach((button) => button.addEventListener("click", startSession));
+  $$("[data-action='finish']").forEach((button) => button.addEventListener("click", finishSession));
+
+  $$("[data-action='export']").forEach((button) => button.addEventListener("click", () => {
+    exportState(state);
+    announce("Your local data export was created.");
+  }));
+
+  $$("[data-action='reset-session']").forEach((button) => button.addEventListener("click", () => {
+    state.session = null;
     save();
     render();
+    announce("Active session discarded.");
   }));
 
-  document.querySelectorAll("[data-action='finish']").forEach((button) => button.addEventListener("click", () => {
-    const summary = summarizeSession(sessionModel());
-    if (summary.totalSets > 0) {
-      state.sessions += 1;
-      state.streak += 1;
-      state.history[state.history.length - 1].volume = summary.volumeKg;
-      state.latestInsight = summary.completion === 1
-        ? "All target sets landed. Next block can progress the primary lift by 2.5 kg."
-        : "You left work on the floor. Repeat the session before adding load.";
-    }
-    state.completed = {};
-    state.sessionStarted = false;
-    state.activeView = "dashboard";
-    save();
-    render();
+  $$("[data-toggle-set]").forEach((button) => button.addEventListener("click", () => {
+    toggleSet(button.dataset.exercise, Number(button.dataset.set));
   }));
 
-  document.querySelectorAll("[data-complete]").forEach((button) => button.addEventListener("click", () => {
-    const id = button.dataset.complete;
-    const target = exercises.find((e) => e.id === id).targetSets;
-    const current = state.completed[id] || 0;
-    state.completed[id] = current < Number(button.dataset.set) + 1 ? Number(button.dataset.set) + 1 : current - 1;
-    state.completed[id] = Math.max(0, Math.min(target, state.completed[id]));
-    state.sessionStarted = true;
-    save();
-    render();
-  }));
-
-  document.querySelectorAll("[data-action='export']").forEach((button) => button.addEventListener("click", exportData));
-
-  document.querySelectorAll("[data-action='reset']").forEach((button) => button.addEventListener("click", () => {
-    localStorage.removeItem(STORAGE_KEY);
-    state = loadState();
-    render();
-  }));
-
-  const input = document.querySelector("#exercise-search");
-  if (input) input.addEventListener("input", () => {
-    const query = input.value.toLowerCase().trim();
-    document.querySelectorAll(".library-card").forEach((card) => {
-      card.hidden = query && !card.dataset.search.includes(query);
+  $$("[data-input]").forEach((input) => {
+    input.addEventListener("change", () => {
+      updateSet(input.dataset.exercise, Number(input.dataset.set), input.dataset.input, input.value);
+      render();
     });
   });
+
+  const search = $("#exercise-search");
+  const filters = $$(".filter");
+  let currentFilter = "all";
+
+  const applyLibraryFilter = () => {
+    const query = (search?.value || "").toLowerCase().trim();
+    $$(".library-card").forEach((card) => {
+      const matchesText = !query || card.dataset.search.includes(query);
+      const matchesFilter = currentFilter === "all" || card.dataset.equipment === currentFilter;
+      card.hidden = !(matchesText && matchesFilter);
+    });
+  };
+
+  search?.addEventListener("input", applyLibraryFilter);
+  filters.forEach((button) => button.addEventListener("click", () => {
+    currentFilter = button.dataset.filter;
+    filters.forEach((item) => item.classList.toggle("active", item === button));
+    applyLibraryFilter();
+  }));
+
+  $("#display-name")?.addEventListener("change", (event) => {
+    state.settings.displayName = event.target.value.trim().slice(0, 50) || "Athlete";
+    save();
+  });
+
+  $("#units")?.addEventListener("change", (event) => {
+    state.settings.units = event.target.value === "lb" ? "lb" : "kg";
+    save();
+  });
+
+  $$("[data-action='save-settings']").forEach((button) => button.addEventListener("click", () => {
+    const name = $("#display-name")?.value.trim().slice(0, 50);
+    state.settings.displayName = name || "Athlete";
+    state.settings.units = $("#units")?.value === "lb" ? "lb" : "kg";
+    save();
+    announce("Preferences saved.");
+    render();
+  }));
+
+  $$("[data-action='clear-data']").forEach((button) => button.addEventListener("click", () => {
+    const confirmed = window.confirm("Delete all local GYM data from this browser?");
+    if (!confirmed) return;
+    clearState();
+    state = defaultState([]);
+    render();
+    announce("Local GYM data deleted.");
+  }));
+
+  updateRestUI();
 }
 
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("./src/sw.js").catch(() => {});
+  navigator.serviceWorker.register("./src/sw.js").catch((error) => {
+    console.warn("GYM service worker unavailable", error);
+  });
 }
 
 render();

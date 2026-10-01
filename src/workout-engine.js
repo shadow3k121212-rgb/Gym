@@ -8,7 +8,7 @@ export function calculateVolume(sets) {
   return sets.reduce((total, set) => total + calculateSetVolume(set), 0);
 }
 
-function completedCount(exercise) {
+export function completedCount(exercise) {
   const sets = exercise.sets || [];
   if (sets.some((set) => typeof set.completed === "boolean")) {
     return sets.filter((set) => set.completed).length;
@@ -38,9 +38,7 @@ export function suggestProgression(lastWeightKg, completedSets, targetSets, incr
 export function summarizeSession(exercises) {
   const allSets = exercises.flatMap((exercise) => exercise.sets || []);
   const hasExplicitCompletion = allSets.some((set) => typeof set.completed === "boolean");
-  const completedSets = hasExplicitCompletion
-    ? allSets.filter((set) => set.completed)
-    : allSets;
+  const completedSets = hasExplicitCompletion ? allSets.filter((set) => set.completed) : allSets;
   const totalSets = exercises.reduce((total, exercise) =>
     total + Number(exercise.targetSets ?? (exercise.sets || []).length), 0);
   return {
@@ -58,16 +56,7 @@ export function getNextOpenSet(exercise) {
   return (exercise.sets || []).find((set) => !set.completed) || null;
 }
 
-export function createMovementEvent({
-  sessionId,
-  exerciseId,
-  timestamp,
-  source = "manual",
-  reps,
-  confidence = null,
-  metrics = {},
-  model = null
-}) {
+export function createMovementEvent({ sessionId, exerciseId, timestamp, source = "manual", reps, confidence = null, metrics = {}, model = null }) {
   return {
     schemaVersion: 1,
     sessionId,
