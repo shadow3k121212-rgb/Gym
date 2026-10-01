@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { hashPassword, verifyPassword, issueAccessToken, verifyAccessToken, extractBearerToken } from "./auth.js";
+import { createRefreshToken, getRefreshTtlSeconds, hashPassword, hashRefreshToken, refreshExpiry, verifyPassword, issueAccessToken, verifyAccessToken, extractBearerToken } from "./auth.js";
 import { ValidationError, normalizeEmail, validatePassword, validateSession, validateMovementEvent } from "./validation.js";
 import { decodeSessionCursor, normalizePageLimit, PaginationError } from "./pagination.js";
 
 const JSON_LIMIT = 256 * 1024;
+const REFRESH_COOKIE = "gym_refresh";
 
 async function readJson(req) {
   let bytes = 0;
@@ -57,11 +58,60 @@ function okError(res, status, message, requestIdValue, details = undefined) {
   send(res, status, { error: { message, requestId: requestIdValue, ...(details ? { details } : {}) } }, { "x-request-id": requestIdValue });
 }
 
-export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
+export function parseCookies(req) {
+  const header = req.headers.cookie;
+  if (typeof header !== "string") return {};
+  const cookies = {};
+  for (const part of header.split(";")) {
+    const index = part.indexOf("=");
+    if (index <= 0) continue;
+    const name = part.slice(0, index).trim();
+    const value = part.slice(index + 1).trim();
+    try { cookies[name] = decodeURIComponent(value); } catch {}
+  }
+  return cookies;
+}
+
+function refreshCookie(token, maxAge = getRefreshTtlSeconds()) {
+  const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
+  return `${REFRESH_COOKIE}=${encodeURIComponent(token)}; HttpOnly; Path=/v1/auth; SameSite=Lax; Max-Age=${maxAge}${secure}`;
+}
+
+function clearRefreshCookie() {
+  const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
+  return `${REFRESH_COOKIE}=; HttpOnly; Path=/v1/auth; SameSite=Lax; Max-Age=0${secure}`;
+}
+
+function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
   if (!repo) throw new Error("Repository is required.");
   if (!jwtSecret || jwtSecret.length < 32) throw new Error("JWT secret must be at least 32 characters.");
 
   const authFailures = new Map();
+
+  async function startAuthSession(user) {
+    const refreshToken = createRefreshToken();
+    const sessionId = randomUUID();
+    await repo.createAuthSession({
+      id:sessionId,
+      familyId:sessionId,
+      userId:user.id,
+      tokenHash:hashRefreshToken(refreshToken),
+      expiresAt:refreshExpiry()
+    });
+    return {
+      accessToken:issueAccessToken(user.id,jwtSecret,Date.now(),sessionId),
+      refreshToken,
+      sessionId
+    };
+  }
+
+  async function activeAuthUser(req) {
+    const payload = authUser(req);
+    if (!payload?.sessionId) return null;
+    const session = await repo.getAuthSession(payload.sessionId, payload.userId);
+    if (!session || session.revoked_at || new Date(session.expires_at).getTime() <= Date.now()) return null;
+    return payload;
+  }
 
   function authUser(req) {
     const token = extractBearerToken(req);
@@ -76,7 +126,8 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
       "access-control-allow-origin": corsOrigin === "*" ? "*" : origin === corsOrigin ? corsOrigin : "",
       "vary": "Origin",
       "access-control-allow-headers": "Authorization, Content-Type, Idempotency-Key, X-Request-Id",
-      "access-control-allow-methods": "GET,POST,OPTIONS"
+      "access-control-allow-methods": "GET,POST,OPTIONS",
+      ...(corsOrigin !== "*" ? { "access-control-allow-credentials":"true" } : {})
     };
     if (req.method === "OPTIONS") return send(res, 204, {}, { ...cors, "x-request-id": id });
 
@@ -108,8 +159,13 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
         if (existing) return okError(res, 409, "Email already registered.", id);
         const credentials = await hashPassword(password);
         const user = await repo.createUser({ email, passwordHash:credentials.hash, passwordSalt:credentials.salt });
-        const token = issueAccessToken(user.id, jwtSecret);
-        return send(res, 201, { user:{ id:user.id, email:user.email }, accessToken:token }, { ...cors, "x-request-id":id });
+        const authSession = await startAuthSession(user);
+        return send(
+          res,
+          201,
+          { user:{ id:user.id, email:user.email }, accessToken:authSession.accessToken },
+          { ...cors, "x-request-id":id, "set-cookie":refreshCookie(authSession.refreshToken) }
+        );
       }
 
       if (path === "/v1/auth/login" && req.method === "POST") {
@@ -126,17 +182,69 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
           return okError(res, 401, "Invalid email or password.", id);
         }
         authFailures.delete(key);
-        const token = issueAccessToken(user.id, jwtSecret);
-        return send(res, 200, { user:{ id:user.id, email:user.email }, accessToken:token }, { ...cors, "x-request-id":id });
+        const authSession = await startAuthSession(user);
+        return send(
+          res,
+          200,
+          { user:{ id:user.id, email:user.email }, accessToken:authSession.accessToken },
+          { ...cors, "x-request-id":id, "set-cookie":refreshCookie(authSession.refreshToken) }
+        );
       }
 
-      const auth = authUser(req);
+      if (path === "/v1/auth/refresh" && req.method === "POST") {
+        const rawRefreshToken = parseCookies(req)[REFRESH_COOKIE];
+        if (!rawRefreshToken) return okError(res, 401, "Refresh session required.", id);
+        const replacementId = randomUUID();
+        const replacementToken = createRefreshToken();
+        const rotated = await repo.rotateAuthSession(hashRefreshToken(rawRefreshToken), {
+          id:replacementId,
+          tokenHash:hashRefreshToken(replacementToken),
+          expiresAt:refreshExpiry()
+        });
+        if (rotated.status !== "rotated") {
+          return send(res, 401, { error:{ message:"Refresh session is invalid.", requestId:id } }, { ...cors, "x-request-id":id, "set-cookie":clearRefreshCookie() });
+        }
+        const user = await repo.getUserById(rotated.userId);
+        if (!user || user.status !== "active") {
+          await repo.revokeAuthSession(rotated.userId, rotated.sessionId, "account-inactive");
+          return send(res, 401, { error:{ message:"Account is not active.", requestId:id } }, { ...cors, "x-request-id":id, "set-cookie":clearRefreshCookie() });
+        }
+        const accessToken = issueAccessToken(user.id,jwtSecret,Date.now(),rotated.sessionId);
+        return send(res, 200, { user:{ id:user.id, email:user.email }, accessToken }, { ...cors, "x-request-id":id, "set-cookie":refreshCookie(replacementToken) });
+      }
+
+      if (path === "/v1/auth/logout" && req.method === "POST") {
+        const rawRefreshToken = parseCookies(req)[REFRESH_COOKIE];
+        if (rawRefreshToken) await repo.revokeAuthSessionByTokenHash(hashRefreshToken(rawRefreshToken), "logout");
+        return send(res, 204, {}, { ...cors, "x-request-id":id, "set-cookie":clearRefreshCookie() });
+      }
+
+      const auth = await activeAuthUser(req);
       if (!auth) return okError(res, 401, "Authentication required.", id);
       const user = await repo.getUserById(auth.userId);
       if (!user || user.status !== "active") return okError(res, 401, "Account is not active.", id);
 
       if (path === "/v1/me" && req.method === "GET") {
         return send(res, 200, { user:{ id:user.id, email:user.email, createdAt:user.created_at } }, { ...cors, "x-request-id":id });
+      }
+
+      if (path === "/v1/auth/logout-all" && req.method === "POST") {
+        const count = await repo.revokeAllAuthSessions(user.id, auth.sessionId, "logout-all");
+        return send(res, 200, { revoked:count }, { ...cors, "x-request-id":id });
+      }
+
+      if (path === "/v1/auth/sessions" && req.method === "GET") {
+        const sessions = await repo.listAuthSessions(user.id);
+        return send(res, 200, { sessions }, { ...cors, "x-request-id":id });
+      }
+
+      const sessionPrefix = "/v1/auth/sessions/";
+      if (path.startsWith(sessionPrefix) && req.method === "DELETE") {
+        const sessionId = path.slice(sessionPrefix.length);
+        if (!sessionId || !/^[0-9a-f-]{36}$/i.test(sessionId)) return okError(res, 400, "Invalid session id.", id);
+        const revoked = await repo.revokeAuthSession(user.id, sessionId);
+        if (!revoked) return okError(res, 404, "Session not found.", id);
+        return send(res, 200, { revoked:true }, { ...cors, "x-request-id":id });
       }
 
       if (path === "/v1/sessions" && req.method === "POST") {
