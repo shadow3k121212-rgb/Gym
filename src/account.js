@@ -35,6 +35,7 @@ export function wireAccount({ render, announce }) {
     button.disabled = true;
     const result = await logout();
     render();
+    window.dispatchEvent(new Event("gym:auth-changed"));
     announce(result.ok ? "Signed out." : "Signed out locally. The server session may already be expired.");
   }));
   document.querySelectorAll("[data-account-action=\"login\"]").forEach((button) => button.addEventListener("click", async () => {
