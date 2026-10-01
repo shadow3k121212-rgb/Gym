@@ -1,6 +1,7 @@
 import {
   confirmPasswordReset,
   deleteAccount,
+  getCurrentUserId,
   hasApi,
   hasAuth,
   listAuthSessions,
@@ -33,6 +34,7 @@ export function renderAccount(state) {
           : connected
             ? `<p>This browser uses a short-lived access session with a secure refresh cookie. Completed workouts can sync after local save.</p>
                <div id="auth-session-list" class="session-list"><div class="micro-note">Loading active sessions…</div></div>
+               ${renderSyncRecovery(state)}
                <div class="auth-actions">
                  <button class="secondary-button" data-account-action="sign-out">Sign out</button>
                  <button class="secondary-button" data-account-action="logout-all">Sign out all devices</button>
@@ -88,6 +90,32 @@ export function renderAccount(state) {
   `;
 }
 
+function renderSyncRecovery(state) {
+  const currentUserId = getCurrentUserId();
+  const pending = currentUserId && Array.isArray(state?.syncQueue)
+    ? state.syncQueue.filter((item) => item && item.userId === currentUserId && item.session?.id)
+    : [];
+  const blocked = pending.filter((item) => item.blocked);
+  if (!pending.length) return "";
+  return `
+    <div class="panel-subsection">
+      <div class="eyebrow">CLOUD RECOVERY</div>
+      <strong>${pending.length} workout${pending.length === 1 ? "" : "s"} retained for sync.</strong>
+      <div class="micro-note">${blocked.length
+        ? blocked.length + " blocked after a permanent sync rejection. Local records remain safe."
+        : "Transient failures retry automatically with bounded backoff."}</div>
+      ${blocked.length ? blocked.map((item) => `
+        <div class="session-row">
+          <div>
+            <strong>${escapeHtml(item.session.name || "Workout")}</strong>
+            <span class="micro-note">${escapeHtml(item.lastError || "Manual retry required.")}</span>
+          </div>
+          <button class="text-button" data-retry-sync="${escapeHtml(item.session.id)}">Retry</button>
+        </div>`).join("") : ""}
+    </div>
+  `;
+}
+
 function renderSessionList(sessions) {
   const target = document.querySelector("#auth-session-list");
   if (!target) return;
@@ -136,7 +164,7 @@ function announce(message) {
   if (toast) toast.textContent = message;
 }
 
-export function wireAccount({ render }) {
+export function wireAccount({ render, retrySync }) {
   document.querySelectorAll('[data-account-action="sign-out"]').forEach((button) => button.addEventListener("click", async () => {
     button.disabled = true;
     const result = await logout();
@@ -210,6 +238,20 @@ export function wireAccount({ render }) {
     } else {
       button.disabled = false;
       announce(result.message);
+    }
+  }));
+
+  document.querySelectorAll("[data-retry-sync]").forEach((button) => button.addEventListener("click", async () => {
+    if (typeof retrySync !== "function") return;
+    button.disabled = true;
+    const sessionId = button.dataset.retrySync;
+    const result = await retrySync(sessionId);
+    if (result?.ok) {
+      render();
+      announce("Pending workout retry released.");
+    } else {
+      button.disabled = false;
+      announce(result?.message || "Could not release the pending workout retry.");
     }
   }));
 
