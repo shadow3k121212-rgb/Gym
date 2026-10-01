@@ -77,7 +77,10 @@ function normalizeHistory(history) {
     name: typeof item.name === "string" ? item.name.slice(0, 120) : "Workout",
     volumeKg: finiteInRange(item.volumeKg, 0, 10000000, 0),
     sets: Math.floor(finiteInRange(item.sets, 0, 1000, 0)),
-    source: typeof item.source === "string" ? item.source.slice(0, 30) : "manual"
+    source: typeof item.source === "string" ? item.source.slice(0, 30) : "manual",
+    ...(typeof item.cloudOwnerId === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.cloudOwnerId)
+      ? { cloudOwnerId: item.cloudOwnerId.toLowerCase() }
+      : {})
   }));
 }
 
