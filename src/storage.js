@@ -106,7 +106,9 @@ export function loadState(storage = globalThis.localStorage) {
       activeView: ["dashboard", "workout", "progress", "library", "settings"].includes(current.activeView) ? current.activeView : "dashboard",
       session: normalizeSession(current.session),
       history: normalizeHistory(current.history),
-      syncQueue: normalizeSyncQueue(current.syncQueue).map(normalizeSession).filter(Boolean),
+      syncQueue: normalizeSyncQueue(current.syncQueue)
+        .map((item) => ({ userId: item.userId, session: normalizeSession(item.session) }))
+        .filter((item) => item.session),
       settings: {
         ...base.settings,
         ...(current.settings || {}),
