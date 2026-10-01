@@ -8,14 +8,15 @@ export class PaginationError extends Error {
 }
 
 export function encodeSessionCursor({ startedAt, id }) {
-  if (typeof startedAt !== "string" || !Number.isFinite(Date.parse(startedAt))) {
+  const parsedTimestamp = startedAt instanceof Date ? startedAt.getTime() : Date.parse(startedAt);
+  if (!Number.isFinite(parsedTimestamp)) {
     throw new PaginationError("Cursor timestamp is invalid.");
   }
   if (typeof id !== "string" || !UUID_PATTERN.test(id)) {
     throw new PaginationError("Cursor id is invalid.");
   }
   return Buffer.from(JSON.stringify({
-    startedAt: new Date(startedAt).toISOString(),
+    startedAt: new Date(parsedTimestamp).toISOString(),
     id: id.toLowerCase()
   })).toString("base64url");
 }
