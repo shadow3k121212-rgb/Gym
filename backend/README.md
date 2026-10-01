@@ -19,6 +19,8 @@ Run the API with:
 DATABASE_URL=postgresql://gym:gym@localhost:5432/gym \
 JWT_SECRET='replace-with-a-32-character-minimum-secret' \
 CORS_ORIGIN='http://localhost:4173' \
+PASSWORD_RESET_WEBHOOK_URL='https://delivery.example.test/password-reset' \
+PASSWORD_RESET_WEBHOOK_SECRET='replace-with-a-delivery-secret' \
 npm start
 ```
 
@@ -27,7 +29,12 @@ npm start
 - `GET /v1/health` — liveness plus database reachability signal.
 - `GET /v1/ready` — readiness; returns non-200 when the database is unavailable.
 - `POST /v1/auth/register` — account creation with validated credentials and short-lived access token.
-- `POST /v1/auth/login` — authentication with login failure throttling.
+- `POST /v1/auth/login` — authentication with login failure throttling and a secure refresh session cookie.
+- `POST /v1/auth/refresh` — rotating refresh-session exchange with reuse detection.
+- `POST /v1/auth/logout` / `POST /v1/auth/logout-all` — deterministic session revocation.
+- `GET /v1/auth/sessions` / `DELETE /v1/auth/sessions/:id` — device-session management.
+- `POST /v1/auth/password-reset/request` / `POST /v1/auth/password-reset/confirm` — bounded, non-enumerating password recovery.
+- `POST /v1/auth/delete-account` — password-confirmed transactional account deletion.
 - `GET /v1/me` — authenticated current-user lookup.
 - `POST /v1/sessions` — transactional session/set persistence with user-scoped idempotency.
 - `GET /v1/sessions` — authenticated session history.
@@ -56,6 +63,11 @@ npm start
 
 The service validates input server-side, scopes user-owned data by authenticated user, uses parameterized PostgreSQL queries, limits JSON bodies to 256 KiB, attaches request IDs/security headers, and rejects wildcard CORS in production startup configuration.
 
-The current single-process auth throttling is beta-only. Production still requires centralized edge/account abuse controls, email verification, recovery, session revocation/device management, secure refresh/session handling, observability, managed secrets, dependency/security scanning, and formal privacy/retention controls.
+The current single-process auth throttling is beta-only. Production still requires centralized edge/account abuse controls, a managed email verification/recovery delivery provider, observability, managed secrets, dependency/security scanning, backups/restore drills, and formal privacy/retention controls. Browser access tokens are short-lived in-memory state; refresh tokens are HttpOnly cookies and are rotated/revoked server-side.
 
 Raw camera video is outside the persistence model by default. Future computer-vision processing should prefer on-device inference where feasible and persist only approved derived metrics with model/version/confidence metadata.
+
+
+### Password recovery delivery
+
+Set `PASSWORD_RESET_WEBHOOK_URL` to an authenticated service that sends the recovery token through the product's managed email provider. The API always returns the same accepted response shape for valid-looking reset requests so account existence is not disclosed. In production, both the webhook URL and `PASSWORD_RESET_WEBHOOK_SECRET` are required at startup.
