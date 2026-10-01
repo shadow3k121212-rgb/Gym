@@ -28,9 +28,9 @@ test("merges remote truth by session id without duplicating local history", () =
       { id:"123e4567-e89b-12d3-a456-426614174003", started_at:"2026-10-02T12:00:00Z", completed_at:null, name:"Cloud-only", source:"manual", volume:"200", completed_sets:"3" }
     ]
   );
-  assert.deepEqual(merged.map((item) => item.id), ["2","1","3"]);
-  assert.equal(merged.find((item) => item.id === "1").name, "Cloud");
-  assert.equal(merged.find((item) => item.id === "1").volumeKg, 560);
+  assert.deepEqual(merged.map((item) => item.id), ["123e4567-e89b-12d3-a456-426614174002","123e4567-e89b-12d3-a456-426614174001","123e4567-e89b-12d3-a456-426614174003"]);
+  assert.equal(merged.find((item) => item.id === "123e4567-e89b-12d3-a456-426614174001").name, "Cloud");
+  assert.equal(merged.find((item) => item.id === "123e4567-e89b-12d3-a456-426614174001").volumeKg, 560);
 });
 test("rejects malformed remote sessions without replacing valid local history", () => {
   assert.equal(remoteSessionToHistory({
