@@ -1,5 +1,3 @@
-BEGIN;
-
 INSERT INTO exercises (id, slug, name, muscle_group, equipment)
 VALUES
   ('bench', 'barbell-bench-press', 'Barbell Bench Press', 'Chest', 'Barbell'),
@@ -13,5 +11,3 @@ ON CONFLICT (id) DO UPDATE SET
   slug=excluded.slug,
   muscle_group=excluded.muscle_group,
   equipment=excluded.equipment;
-
-COMMIT;
