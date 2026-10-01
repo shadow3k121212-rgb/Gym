@@ -653,20 +653,32 @@ test("auth session listing distinguishes expired sessions from active sessions",
   const testServer = await makeServer();
   t.after(() => testServer.server.close());
 
-  const registered = await request(testServer.base, "/v1/auth/register", {
+  const first = await request(testServer.base, "/v1/auth/register", {
     method:"POST",
     body:JSON.stringify({email:"expired-session@example.com",password:"correct horse battery staple"})
   });
-  const sessionId = JSON.parse(Buffer.from(registered.body.accessToken.split(".")[1], "base64url").toString("utf8")).sid;
-  const session = testServer.repo.authSessions.get(sessionId);
-  assert.ok(session);
-  session.expires_at = new Date(Date.now() - 1000).toISOString();
+  await request(testServer.base, "/v1/auth/login", {
+    method:"POST",
+    body:JSON.stringify({email:"expired-session@example.com",password:"correct horse battery staple"})
+  });
+
+  const secondSessionId = [...testServer.repo.authSessions.values()]
+    .filter((session) => session.user_id === JSON.parse(Buffer.from(first.body.accessToken.split(".")[1], "base64url").toString("utf8")).sub)
+    .sort((a,b) => b.created_at.localeCompare(a.created_at))[0].id;
+  const secondSession = testServer.repo.authSessions.get(secondSessionId);
+  assert.ok(secondSession);
+  secondSession.expires_at = new Date(Date.now() - 1000).toISOString();
 
   const list = await request(testServer.base, "/v1/auth/sessions", {
-    headers:{authorization:`Bearer ${registered.body.accessToken}`}
+    headers:{authorization:`Bearer ${first.body.accessToken}`}
   });
-  assert.equal(list.status,401);
+  assert.equal(list.status,200);
+  const expired = list.body.sessions.find((session) => session.id === secondSessionId);
+  const current = list.body.sessions.find((session) => session.isCurrent);
+  assert.equal(expired.status,"expired");
+  assert.equal(current.status,"active");
 });
+
 test("password reset invalidates every active device session", async (t) => {
   const testServer = await makeServer();
   t.after(() => testServer.server.close());
