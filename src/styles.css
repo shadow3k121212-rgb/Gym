@@ -16,3 +16,42 @@
 .mobile-nav{display:none}
 @media (max-width:1050px){.app-shell{grid-template-columns:210px 1fr}.main-content{padding:24px}.hero-grid,.section-grid,.workout-layout,.settings-grid{grid-template-columns:1fr}.hero-visual{display:none}.library-grid{grid-template-columns:repeat(2,1fr)}}
 @media (max-width:760px){.app-shell{display:block}.sidebar{display:none}.main-content{padding:20px 16px 92px}.topbar h1{font-size:28px}.hero-card{padding:24px;min-height:310px}.hero-copy h2{font-size:42px}.metric-row{grid-template-columns:1fr 1fr}.metric-row>div:last-child{grid-column:1/-1}.library-toolbar{display:block}.filter-row{margin-top:10px}.library-grid,.roadmap-cards,.settings-grid{grid-template-columns:1fr}.mobile-nav{display:grid;grid-template-columns:repeat(4,1fr);position:fixed;bottom:0;left:0;right:0;z-index:10;background:rgba(10,13,11,.96);backdrop-filter:blur(16px);border-top:1px solid var(--line);padding:7px 8px calc(7px + env(safe-area-inset-bottom))}.mobile-nav .nav-item{justify-content:center;flex-direction:column;gap:4px;padding:8px}.mobile-nav .nav-item span{font-size:9px}.search-box{min-width:0}.set-title{display:block}.set-title b{display:block;margin-top:8px}.set-table-head,.set-row{grid-template-columns:26px 1fr 1fr 1fr 42px}.set-input{padding:9px 4px}.set-check{width:36px;height:36px}.hero-meta{gap:15px}.next-set-banner{align-items:flex-start}.exercise-row{grid-template-columns:34px 1fr auto}.exercise-load{font-size:10px}.settings-grid{display:grid}.toast{bottom:78px}}
+
+
+.session-list {
+  display: grid;
+  gap: 10px;
+  margin: 14px 0;
+}
+
+.session-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+
+.session-row > div {
+  min-width: 0;
+}
+
+.session-row strong,
+.session-row .micro-note {
+  display: block;
+}
+
+.panel-subsection {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+.panel-subsection .field-label {
+  margin-top: 12px;
+}
+
+.panel-subsection .field-label:first-of-type {
+  margin-top: 0;
+}
