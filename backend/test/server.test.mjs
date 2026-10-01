@@ -376,3 +376,159 @@ test("does not reveal movement events through another user’s replay key", asyn
   assert.equal(ownerWrite.status,201);
   assert.equal(otherReplay.status,404);
 });
+function cookieFrom(response) {
+  return response.headers.get("set-cookie") || "";
+}
+
+function refreshCookieValue(response) {
+  const cookie = cookieFrom(response);
+  const match = cookie.match(/^gym_refresh=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+test("issues a refresh cookie and rotates it without exposing raw refresh tokens", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"refresh@example.com",password:"correct horse battery staple"})
+  });
+  const oldRefresh = refreshCookieValue(registered);
+  assert.ok(oldRefresh);
+  assert.match(cookieFrom(registered), /HttpOnly/);
+  assert.match(cookieFrom(registered), /SameSite=Lax/);
+
+  const decodedPayload = JSON.parse(Buffer.from(registered.body.accessToken.split(".")[1], "base64url").toString("utf8"));
+  assert.equal(typeof decodedPayload.sid, "string");
+
+  const rotated = await request(testServer.base, "/v1/auth/refresh", {
+    method:"POST",
+    headers:{cookie:`gym_refresh=${encodeURIComponent(oldRefresh)}`}
+  });
+  assert.equal(rotated.status,200);
+  assert.notEqual(refreshCookieValue(rotated), oldRefresh);
+  assert.equal(typeof rotated.body.accessToken, "string");
+
+  const reused = await request(testServer.base, "/v1/auth/refresh", {
+    method:"POST",
+    headers:{cookie:`gym_refresh=${encodeURIComponent(oldRefresh)}`}
+  });
+  assert.equal(reused.status,401);
+
+  const newest = refreshCookieValue(rotated);
+  const familyReuse = await request(testServer.base, "/v1/auth/refresh", {
+    method:"POST",
+    headers:{cookie:`gym_refresh=${encodeURIComponent(newest)}`}
+  });
+  assert.equal(familyReuse.status,401);
+});
+
+test("logout immediately revokes the access session", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"logout@example.com",password:"correct horse battery staple"})
+  });
+  const refresh = refreshCookieValue(registered);
+  const logout = await request(testServer.base, "/v1/auth/logout", {
+    method:"POST",
+    headers:{cookie:`gym_refresh=${encodeURIComponent(refresh)}`}
+  });
+  assert.equal(logout.status,204);
+
+  const me = await request(testServer.base, "/v1/me", {
+    headers:{authorization:`Bearer ${registered.body.accessToken}`}
+  });
+  assert.equal(me.status,401);
+});
+
+test("logout-all revokes every session family and clears the refresh cookie", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const first = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"multi@example.com",password:"correct horse battery staple"})
+  });
+  const second = await request(testServer.base, "/v1/auth/login", {
+    method:"POST",
+    body:JSON.stringify({email:"multi@example.com",password:"correct horse battery staple"})
+  });
+
+  const logoutAll = await request(testServer.base, "/v1/auth/logout-all", {
+    method:"POST",
+    headers:{authorization:`Bearer ${first.body.accessToken}`}
+  });
+  assert.equal(logoutAll.status,200);
+  assert.equal(logoutAll.body.revoked,2);
+  assert.match(cookieFrom(logoutAll), /Max-Age=0/);
+
+  const firstMe = await request(testServer.base, "/v1/me", {
+    headers:{authorization:`Bearer ${first.body.accessToken}`}
+  });
+  const secondMe = await request(testServer.base, "/v1/me", {
+    headers:{authorization:`Bearer ${second.body.accessToken}`}
+  });
+  assert.equal(firstMe.status,401);
+  assert.equal(secondMe.status,401);
+});
+
+test("disabled accounts cannot use existing access or refresh sessions", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"disabled@example.com",password:"correct horse battery staple"})
+  });
+  const refresh = refreshCookieValue(registered);
+  const userId = JSON.parse(Buffer.from(registered.body.accessToken.split(".")[1], "base64url").toString("utf8")).sub;
+  const user = testServer.repo.users.get(userId);
+  user.status = "disabled";
+
+  const me = await request(testServer.base, "/v1/me", {
+    headers:{authorization:`Bearer ${registered.body.accessToken}`}
+  });
+  const refreshResult = await request(testServer.base, "/v1/auth/refresh", {
+    method:"POST",
+    headers:{cookie:`gym_refresh=${encodeURIComponent(refresh)}`}
+  });
+  assert.equal(me.status,401);
+  assert.equal(refreshResult.status,401);
+});
+
+test("lists and revokes only the requesting user's sessions", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const a = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"sessions-a@example.com",password:"correct horse battery staple"})
+  });
+  const b = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"sessions-b@example.com",password:"correct horse battery staple"})
+  });
+
+  const listA = await request(testServer.base, "/v1/auth/sessions", {
+    headers:{authorization:`Bearer ${a.body.accessToken}`}
+  });
+  assert.equal(listA.status,200);
+  assert.equal(listA.body.sessions.length,1);
+
+  const foreignDelete = await request(testServer.base, "/v1/auth/sessions/" + listA.body.sessions[0].id, {
+    method:"DELETE",
+    headers:{authorization:`Bearer ${b.body.accessToken}`}
+  });
+  assert.equal(foreignDelete.status,404);
+
+  const ownDelete = await request(testServer.base, "/v1/auth/sessions/" + listA.body.sessions[0].id, {
+    method:"DELETE",
+    headers:{authorization:`Bearer ${a.body.accessToken}`}
+  });
+  assert.equal(ownDelete.status,200);
+
+  const me = await request(testServer.base, "/v1/me", {
+    headers:{authorization:`Bearer ${a.body.accessToken}`}
+  });
+  assert.equal(me.status,401);
+});
