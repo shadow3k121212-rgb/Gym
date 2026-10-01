@@ -29,12 +29,13 @@ function normalizeSet(set, index) {
   const completedAt = typeof set.completedAt === "string" && !Number.isNaN(Date.parse(set.completedAt))
     ? new Date(set.completedAt).toISOString()
     : null;
+  const completed = Boolean(set.completed) && Boolean(completedAt);
   return {
     index: index + 1,
     reps: finiteInRange(set.reps, 0, 1000, 0),
     weightKg: finiteInRange(set.weightKg, 0, 1000, 0),
-    completed: Boolean(set.completed),
-    completedAt,
+    completed,
+    completedAt: completed ? completedAt : null,
     rpe: set.rpe === null || set.rpe === undefined || set.rpe === "" ? null : finiteInRange(set.rpe, 1, 10, 1)
   };
 }
@@ -42,6 +43,9 @@ function normalizeSet(set, index) {
 function normalizeSession(session) {
   if (!session || typeof session !== "object" || typeof session.id !== "string") return null;
   if (!Array.isArray(session.exercises)) return null;
+  const startedAt = typeof session.startedAt === "string" && !Number.isNaN(Date.parse(session.startedAt))
+    ? new Date(session.startedAt).toISOString()
+    : new Date().toISOString();
   const exercises = session.exercises
     .filter((item) => item && typeof item.exerciseId === "string" && getExercise(item.exerciseId))
     .map((item) => ({
@@ -53,12 +57,10 @@ function normalizeSession(session) {
     .slice(0, 50);
   if (!exercises.length) return null;
   return {
-    id: session.id,
+    id: session.id.slice(0, 120),
     name: typeof session.name === "string" && session.name.trim() ? session.name.slice(0, 120) : "Workout",
-    startedAt: typeof session.startedAt === "string" && !Number.isNaN(Date.parse(session.startedAt))
-      ? new Date(session.startedAt).toISOString()
-      : new Date().toISOString(),
-    completedAt: typeof session.completedAt === "string" && !Number.isNaN(Date.parse(session.completedAt))
+    startedAt,
+    completedAt: typeof session.completedAt === "string" && !Number.isNaN(Date.parse(session.completedAt)) && new Date(session.completedAt).getTime() >= Date.parse(startedAt)
       ? new Date(session.completedAt).toISOString()
       : null,
     source: ["manual", "camera", "wearable"].includes(session.source) ? session.source : "manual",
