@@ -49,7 +49,29 @@ function loadState() {
 let state = loadState();
 
 function save() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    return true;
+  } catch (error) {
+    console.error("Could not persist workout state", error);
+    return false;
+  }
+}
+
+function exportData() {
+  const payload = {
+    schemaVersion: 1,
+    exportedAt: new Date().toISOString(),
+    product: "GYM Training OS",
+    state
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `gym-data-${new Date().toISOString().slice(0, 10)}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 function icon(name) {
@@ -101,11 +123,11 @@ function renderShell(content) {
       <main class="main-content">
         <header class="topbar">
           <div>
-            <div class="eyebrow">THURSDAY · TRAINING BLOCK 04</div>
+            <div class="eyebrow">YOUR TRAINING SPACE · LOCAL BETA</div>
             <h1>${state.activeView === "dashboard" ? "Control your training." : viewTitle()}</h1>
           </div>
           <div class="top-actions">
-            <button class="icon-button" title="Reset demo state" data-action="reset">↺</button>
+            <button class="icon-button" title="Export your data" data-action="export" aria-label="Export your data">↓</button><button class="icon-button" title="Reset demo state" data-action="reset" aria-label="Reset demo data">↺</button>
             <div class="avatar">S</div>
           </div>
         </header>
@@ -148,21 +170,21 @@ function dashboard() {
       </article>
 
       <article class="stat-card">
-        <div class="eyebrow">WEEKLY LOAD</div><div class="stat-number">${formatKg(state.history.reduce((a,b)=>a+b.volume,0)/1000)}k</div><div class="stat-caption">kg moved</div>
+        <div class="eyebrow">WEEKLY LOAD · SAMPLE</div><div class="stat-number">${formatKg(state.history.reduce((a,b)=>a+b.volume,0)/1000)}k</div><div class="stat-caption">kg moved</div>
         <div class="mini-bars">${state.history.map((item) => `<div class="bar-wrap"><div class="bar" style="height:${Math.max(7,(item.volume/max)*100)}%"></div><span>${item.day}</span></div>`).join("")}</div>
       </article>
     </section>
 
     <section class="section-grid">
       <div class="panel">
-        <div class="panel-head"><div><div class="eyebrow">TRAINING PULSE</div><h3>Consistency is compounding.</h3></div><span class="tag">ON TRACK</span></div>
+        <div class="panel-head"><div><div class="eyebrow">TRAINING PULSE · SAMPLE</div><h3>Consistency is compounding.</h3></div><span class="tag">DEMO DATA</span></div>
         <div class="metric-row">
           <div><span class="metric-value">${state.sessions}</span><span class="metric-label">sessions</span></div>
           <div><span class="metric-value">${state.streak}</span><span class="metric-label">day streak</span></div>
           <div><span class="metric-value">+8.4%</span><span class="metric-label">volume vs last block</span></div>
         </div>
         <div class="progress-line"><span style="width:72%"></span></div>
-        <div class="micro-note">Target: 5 quality sessions this week. You have logged 4.</div>
+        <div class="micro-note">Illustrative preview values. Your real history starts when you log sessions.</div>
       </div>
       <div class="panel insight-panel">
         <div class="eyebrow">COACH SIGNAL · RULE-BASED</div>
@@ -235,11 +257,11 @@ function progressView() {
   return renderShell(`
     <section class="section-grid">
       <div class="panel chart-panel">
-        <div class="panel-head"><div><div class="eyebrow">VOLUME TREND</div><h3>Seven-day training signal</h3></div><span class="tag">LIVE</span></div>
+        <div class="panel-head"><div><div class="eyebrow">VOLUME TREND · SAMPLE</div><h3>Seven-day training signal</h3></div><span class="tag">ILLUSTRATIVE</span></div>
         <div class="large-bars">${state.history.map((x)=>`<div class="large-bar-wrap"><div class="large-bar" style="height:${Math.max(8,(x.volume/top)*100)}%"></div><b>${x.volume ? Math.round(x.volume/1000)+"k" : "—"}</b><span>${x.day}</span></div>`).join("")}</div>
       </div>
       <div class="panel">
-        <div class="eyebrow">PERSONAL SIGNALS</div>
+        <div class="eyebrow">PERSONAL SIGNALS · DEMO</div>
         <div class="signal-list">
           <div class="signal"><span>Weekly volume</span><b>${formatKg(total/1000)}k kg</b><small>+8.4% vs prior block</small></div>
           <div class="signal"><span>Consistency</span><b>4 / 5 sessions</b><small>one session remaining</small></div>
@@ -323,6 +345,8 @@ function wire() {
     save();
     render();
   }));
+
+  document.querySelectorAll("[data-action='export']").forEach((button) => button.addEventListener("click", exportData));
 
   document.querySelectorAll("[data-action='reset']").forEach((button) => button.addEventListener("click", () => {
     localStorage.removeItem(STORAGE_KEY);
