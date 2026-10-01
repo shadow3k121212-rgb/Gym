@@ -9,6 +9,7 @@ export class MemoryRepository {
     this.sessions = new Map();
     this.idempotency = new Map();
     this.events = new Map();
+    this.eventIdempotency = new Map();
   }
 
   async health() { return true; }
@@ -70,15 +71,27 @@ export class MemoryRepository {
     }));
   }
 
-  async createMovementEvent(userId,event) {
+  async createMovementEvent(userId,event,idempotencyKey) {
     const session=this.sessions.get(event.sessionId);
     if (!session || session.user_id!==userId) {
       const error=new Error("Session not found.");
       error.code="NOT_FOUND";
       throw error;
     }
-    const saved={id:randomUUID(),...event};
+    const key=event.sessionId + ":" + idempotencyKey;
+    const requestHash=idempotencyHash(event);
+    const existing=this.eventIdempotency.get(key);
+    if (existing) {
+      if (existing.requestHash!==requestHash) {
+        const error=new Error("Idempotency key was already used with a different request payload.");
+        error.code="IDEMPOTENCY_CONFLICT";
+        throw error;
+      }
+      return { existing:true, event:existing.event };
+    }
+    const saved={id:randomUUID(),...event,idempotency_key:idempotencyKey,idempotency_request_hash:requestHash};
     this.events.set(saved.id,saved);
-    return saved;
+    this.eventIdempotency.set(key,{event:saved,requestHash});
+    return { existing:false, event:saved };
   }
 }
