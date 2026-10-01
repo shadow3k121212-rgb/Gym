@@ -110,6 +110,8 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
     if (!payload?.sessionId) return null;
     const session = await repo.getAuthSession(payload.sessionId, payload.userId);
     if (!session || session.revoked_at || new Date(session.expires_at).getTime() <= Date.now()) return null;
+    const user = await repo.getUserById(payload.userId);
+    if (!user || user.status !== "active") return null;
     return payload;
   }
 
