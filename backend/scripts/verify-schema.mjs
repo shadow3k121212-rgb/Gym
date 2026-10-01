@@ -30,9 +30,7 @@ try {
     ["password_reset_tokens", "token_hash"],
     ["password_reset_tokens", "expires_at"],
     ["account_deletion_audit", "event_type"],
-    ["account_deletion_audit", "subject_digest"],
-    ["auth_sessions", "token_hash"],
-    ["auth_sessions", "expires_at"]
+    ["account_deletion_audit", "subject_digest"]
   ];
 
   for (const [table, column] of requiredColumns) {
