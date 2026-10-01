@@ -150,7 +150,18 @@ async function finishSession() {
   render();
   if (hasApi() && hasAuth()) {
     const sync = await syncSession(finishedSession);
-    announce(sync.ok ? "Session saved locally and synced." : "Session saved locally. Cloud sync will retry later.");
+    if (sync.ok) {
+      state.syncQueue = (state.syncQueue || []).filter((item) => item.id !== finishedSession.id);
+      save();
+      announce("Session saved locally and synced.");
+    } else {
+      state.syncQueue = [
+        ...(state.syncQueue || []).filter((item) => item.id !== finishedSession.id),
+        finishedSession
+      ].slice(-20);
+      save();
+      announce("Session saved locally. Cloud sync queued for the next connection.");
+    }
   }
 }
 
@@ -625,4 +636,5 @@ if ("serviceWorker" in navigator) {
 }
 
 render();
+window.addEventListener("online", () => { void flushSyncQueue(); });
 void flushSyncQueue();
