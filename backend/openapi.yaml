@@ -81,9 +81,18 @@ paths:
       parameters:
         - in: query
           name: limit
-          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - in: query
+          name: before
+          description: Opaque cursor returned as nextCursor to fetch the next older page.
+          schema: { type: string, maxLength: 256 }
       responses:
-        "200": { description: Session page }
+        "200":
+          description: Session page
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionPage" }
+        "400": { description: Invalid pagination cursor or limit }
   /v1/movement-events:
     post:
       security: [{ bearerAuth: [] }]
@@ -112,6 +121,28 @@ components:
       type: http
       scheme: bearer
   schemas:
+    SessionSummary:
+      type: object
+      required: [id, name, source, started_at, completed_at, volume, completed_sets]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        source: { type: string, enum: [manual, camera, wearable] }
+        started_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time, nullable: true }
+        volume: { type: number, minimum: 0 }
+        completed_sets: { type: integer, minimum: 0 }
+    SessionPage:
+      type: object
+      required: [sessions, nextCursor]
+      properties:
+        sessions:
+          type: array
+          items: { $ref: "#/components/schemas/SessionSummary" }
+        nextCursor:
+          type: string
+          nullable: true
+
     SessionCreate:
       type: object
       required: [id, startedAt, source, exercises]
