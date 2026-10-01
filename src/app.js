@@ -526,7 +526,7 @@ function workoutView() {
             <div class="rest-card"><b data-rest-timer>${restRemaining > 0 ? formatDuration(restRemaining) : "READY"}</b><span>rest timer</span></div>
           </div>
           <button class="primary-button full" data-action="finish">Save session</button>
-          <button class="secondary-button full" data-action="undo-set">Undo last set action</button>
+          <button class="secondary-button full" data-action="undo-set"${lastSetAction ? "" : " disabled"}>Undo last set action</button>
           <button class="secondary-button full" data-action="reset-session">Discard session</button>
           <div class="micro-note">Set-level records are timestamped and stored with explicit source labels for future analytics and movement intelligence.</div>
         </div>
