@@ -37,9 +37,9 @@ Every change should be:
 - Branch: `product/foundation-10x`
 - Completed foundation work: local-first workout UI, backend API, PostgreSQL schema/migrations, idempotent writes, CI, initial security hardening.
 - Current phase: **Phase 3 — Identity, sessions, authorization, account lifecycle**
-- Status: IN PROGRESS
-- Last completed phase: **Phase 2 — Data model + sync correctness**
-- Phase 3 hardening checkpoint: refresh-token rotation now preserves the original session expiry (no indefinite sliding lifetime); rotated cookies advertise only the remaining server lifetime; current-device revocation clears the refresh cookie and client auth state; production reset delivery is HTTPS-only.
+- Status: **Phase 4 — Reliability, offline recovery, observability**
+- Last completed phase: **Phase 3 — Identity, sessions, authorization, account lifecycle**
+- Phase 3 verification checkpoint: refresh-token rotation preserves the original absolute session expiry; rotated cookies advertise only remaining server lifetime; current-device revocation clears the refresh cookie and client auth state; production reset delivery is HTTPS-only; auth session listing distinguishes active/expired/revoked state; cross-account history isolation and password-reset multi-device invalidation have regression coverage.
 
 ## Phase 1 definition of done
 - No silent state loss on normal user interactions
@@ -78,6 +78,26 @@ Verification evidence:
 - Run #259 also passed PostgreSQL migrations/schema verification, HTTP smoke test, dependency audit, static checks, production build, and output verification.
 
 Phase 2 status: COMPLETE.
+
+## Phase 3 completion log — 2026-10-01
+
+Implemented:
+- explicit server-side refresh-session model with family-based rotation and replay revocation
+- absolute refresh-session expiry preservation across rotations
+- secure HttpOnly refresh-cookie transport with in-memory short-lived browser access state
+- deterministic current-device, other-device, and all-device session revocation semantics
+- non-enumerating, bounded password-reset flow with one-time tokens
+- password reset invalidates existing authentication sessions
+- transactional account deletion with deletion audit evidence and user-owned data cascade coverage
+- authorization regression coverage for cross-user workout history, movement-event writes/replays, and auth-session management
+- deterministic active/expired/revoked session status for API and client session management
+
+Verification evidence:
+- CI run #375 passed on exact Phase 3 head `b88f8158d18f3efea3f8a6c1ed09745c5f5c9c4e`.
+- CI #375 passed unit/API tests, PostgreSQL migrations + schema verification, HTTP smoke, dependency audit, static checks, production build, and output verification.
+- The preceding Phase 3 hardening head `09589d1972931446c6e2e327def08655f20020f0` was also verified by CI #364.
+
+Phase 3 status: COMPLETE.
 
 ## Phase 3 definition of done
 - Access/refresh session lifecycle has explicit expiry, revocation, and rotation semantics.
@@ -139,3 +159,7 @@ Any later PR-context check remains verification-only; the direct branch CI for t
 - harden remote history validation and merge semantics
 - add regression tests for outbox retention and sync failure handling
 - preserve the current local-first source-of-truth contract while cloud synchronization remains optional
+
+## Phase 4 initial checkpoint — 2026-10-01
+
+Status: IN PROGRESS. First implementation slice: durable sync retry metadata and bounded backoff so transient cloud failures do not busy-loop or silently discard pending local work.
