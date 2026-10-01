@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Pool } from "pg";
+import { encodeSessionCursor } from "./pagination.js";
 
 const idempotencyHash = (input) => createHash("sha256").update(JSON.stringify(input)).digest("hex");
 
@@ -104,20 +105,36 @@ export class PostgresRepository {
   }
 
   async listSessions(userId, limit = 20) {
-    const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 50);
+    return (await this.listSessionsPage(userId, { limit })).sessions;
+  }
+
+  async listSessionsPage(userId, { limit = 20, before = null } = {}) {
+    const params = [userId];
+    const conditions = ["ws.user_id = $1"];
+    if (before) {
+      params.push(before.startedAt, before.id);
+      conditions.push("((ws.started_at, ws.id) < ($2::timestamptz, $3::uuid))");
+    }
+    const limitIndex = params.length + 1;
+    params.push(limit + 1);
     const result = await this.pool.query(
       `select ws.id,ws.name,ws.source,ws.started_at,ws.completed_at,
         coalesce(sum(case when wset.completed_at is not null then wset.reps*wset.load_value else 0 end),0) as volume,
         count(wset.id) filter (where wset.completed_at is not null) as completed_sets
        from workout_sessions ws
        left join workout_sets wset on wset.session_id=ws.id
-       where ws.user_id=$1
+       where ${conditions.join(" and ")}
        group by ws.id
-       order by ws.started_at desc
-       limit $2`,
-      [userId, safeLimit]
+       order by ws.started_at desc, ws.id desc
+       limit ${limitIndex}`,
+      params
     );
-    return result.rows;
+    const hasMore = result.rows.length > limit;
+    const sessions = result.rows.slice(0, limit);
+    const nextCursor = hasMore && sessions.length
+      ? encodeSessionCursor({ startedAt: sessions[sessions.length - 1].started_at, id: sessions[sessions.length - 1].id })
+      : null;
+    return { sessions, nextCursor };
   }
 
   async createMovementEvent(userId, event, idempotencyKey) {
