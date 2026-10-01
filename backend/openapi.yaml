@@ -45,6 +45,7 @@ paths:
         "401": { description: Invalid credentials }
   /v1/auth/refresh:
     post:
+      security: [{ refreshCookie: [] }]
       operationId: refreshAuth
       responses:
         "200": { description: Rotated access and refresh session }
@@ -177,6 +178,10 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: gym_refresh
   schemas:
     AuthSession:
       type: object
