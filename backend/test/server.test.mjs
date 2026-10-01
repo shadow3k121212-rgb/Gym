@@ -325,3 +325,54 @@ test("rejects reusing a session id under a different idempotency key", async (t)
   assert.equal(first.status, 201);
   assert.equal(second.status, 409);
 });
+test("does not reveal movement events through another user’s replay key", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const a = await request(testServer.base, "/v1/auth/register", {
+    method:"POST", body:JSON.stringify({email:"event-owner@example.com",password:"correct horse battery staple"})
+  });
+  const b = await request(testServer.base, "/v1/auth/register", {
+    method:"POST", body:JSON.stringify({email:"event-other@example.com",password:"correct horse battery staple"})
+  });
+  const session = {
+    id:"123e4567-e89b-12d3-a456-426614174098",
+    startedAt:"2026-10-01T17:00:00Z",
+    source:"manual",
+    name:"Movement Owner",
+    exercises:[]
+  };
+  await request(testServer.base, "/v1/sessions", {
+    method:"POST",
+    headers:{authorization:`Bearer ${a.body.accessToken}`,"idempotency-key":"movement-owner-session-123456"},
+    body:JSON.stringify(session)
+  });
+  const event = {
+    schemaVersion:1,
+    sessionId:session.id,
+    exerciseId:"bench",
+    timestamp:"2026-10-01T17:01:00Z",
+    source:"camera",
+    reps:8,
+    confidence:.92,
+    model:"pose-v0",
+    metrics:{rom:.81}
+  };
+  const ownerWrite = await request(testServer.base, "/v1/movement-events", {
+    method:"POST",
+    headers:{
+      authorization:`Bearer ${a.body.accessToken}`,
+      "idempotency-key":"movement-replay-shared-123456"
+    },
+    body:JSON.stringify(event)
+  });
+  const otherReplay = await request(testServer.base, "/v1/movement-events", {
+    method:"POST",
+    headers:{
+      authorization:`Bearer ${b.body.accessToken}`,
+      "idempotency-key":"movement-replay-shared-123456"
+    },
+    body:JSON.stringify(event)
+  });
+  assert.equal(ownerWrite.status,201);
+  assert.equal(otherReplay.status,404);
+});
