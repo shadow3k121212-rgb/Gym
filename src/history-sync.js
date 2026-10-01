@@ -1,13 +1,26 @@
+const SOURCES = new Set(["manual", "camera", "wearable"]);
+
+function validIsoDate(value) {
+  if (typeof value !== "string") return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
+}
+
 export function remoteSessionToHistory(session) {
-  if (!session || typeof session.id !== "string") return null;
+  if (!session || typeof session.id !== "string" || !session.id) return null;
   const dateSource = session.completed_at || session.started_at;
+  const isoDate = validIsoDate(dateSource);
+  const volume = Number(session.volume);
+  const sets = Number(session.completed_sets);
+  const source = SOURCES.has(session.source) ? session.source : null;
+  if (!isoDate || !Number.isFinite(volume) || volume < 0 || volume > 10000000 || !source) return null;
   return {
-    id: session.id,
-    date: typeof dateSource === "string" ? dateSource.slice(0, 10) : "",
-    name: typeof session.name === "string" ? session.name : "Workout",
-    volumeKg: Math.round((Number(session.volume) || 0) * 10) / 10,
-    sets: Math.max(0, Number(session.completed_sets) || 0),
-    source: typeof session.source === "string" ? session.source : "manual"
+    id: session.id.slice(0, 120),
+    date: isoDate.slice(0, 10),
+    name: typeof session.name === "string" && session.name.trim() ? session.name.slice(0, 120) : "Workout",
+    volumeKg: Math.round(volume * 10) / 10,
+    sets: Number.isFinite(sets) ? Math.max(0, Math.min(1000, Math.floor(sets))) : 0,
+    source
   };
 }
 

@@ -1,4 +1,5 @@
 import { getExercise } from "./data.js";
+import { normalizeSyncQueue } from "./sync-queue.js";
 
 export const STORAGE_KEY = "gym:state:v2";
 const LEGACY_KEY = "gym:state:v1";
@@ -70,7 +71,7 @@ function normalizeSession(session) {
 
 function normalizeHistory(history) {
   if (!Array.isArray(history)) return [];
-  return history.filter((item) => item && typeof item.id === "string").slice(-100).map((item) => ({
+  return history.filter((item) => item && typeof item.id === "string").map((item) => ({
     id: item.id,
     date: typeof item.date === "string" ? item.date.slice(0, 10) : new Date().toISOString().slice(0, 10),
     name: typeof item.name === "string" ? item.name.slice(0, 120) : "Workout",
@@ -105,7 +106,7 @@ export function loadState(storage = globalThis.localStorage) {
       activeView: ["dashboard", "workout", "progress", "library", "settings"].includes(current.activeView) ? current.activeView : "dashboard",
       session: normalizeSession(current.session),
       history: normalizeHistory(current.history),
-      syncQueue: Array.isArray(current.syncQueue) ? current.syncQueue.map(normalizeSession).filter(Boolean).slice(-20) : [],
+      syncQueue: normalizeSyncQueue(current.syncQueue).map(normalizeSession).filter(Boolean),
       settings: {
         ...base.settings,
         ...(current.settings || {}),

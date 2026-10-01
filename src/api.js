@@ -2,20 +2,24 @@ const config = globalThis.__GYM_CONFIG__ || {};
 export const apiBaseUrl = String(config.apiBaseUrl || "").replace(/\/$/, "");
 const TOKEN_KEY = "gym:access-token";
 
+function getStoredToken() {
+  return globalThis.sessionStorage?.getItem(TOKEN_KEY) || null;
+}
+
 export function hasApi() { return Boolean(apiBaseUrl); }
-export function hasAuth() { return Boolean(sessionStorage.getItem(TOKEN_KEY)); }
-export function setAuthToken(token) { if (token) sessionStorage.setItem(TOKEN_KEY, token); }
-export function clearAuth() { sessionStorage.removeItem(TOKEN_KEY); }
+export function hasAuth() { return Boolean(getStoredToken()); }
+export function setAuthToken(token) { if (token) globalThis.sessionStorage?.setItem(TOKEN_KEY, token); }
+export function clearAuth() { globalThis.sessionStorage?.removeItem(TOKEN_KEY); }
 
 async function request(path, options = {}) {
   if (!apiBaseUrl) return { ok:false, message:"Cloud API is not configured." };
   const headers = { "content-type":"application/json", ...(options.headers || {}) };
-  const token = sessionStorage.getItem(TOKEN_KEY);
+  const token = getStoredToken();
   if (token) headers.authorization = "Bearer " + token;
   try {
     const response = await fetch(apiBaseUrl + path, { ...options, headers });
     const body = await response.json().catch(() => ({}));
-    return response.ok ? { ok:true, status:response.status, body } : { ok:false, status:response.status, message:body?.error?.message || "Request failed." };
+    return response.ok ? { ok:true, status:response.status, body } : { ok:false, status:response.status, authRequired:response.status === 401, message:body?.error?.message || "Request failed." };
   } catch {
     return { ok:false, message:"GYM API is unreachable." };
   }

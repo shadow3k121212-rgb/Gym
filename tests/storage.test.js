@@ -46,3 +46,24 @@ test("clears current and legacy keys", () => {
   const storage=makeStorage({[STORAGE_KEY]:"{}", "gym:state:v1":"{}"}); clearState(storage);
   assert.equal(storage.getItem(STORAGE_KEY),null); assert.equal(storage.getItem("gym:state:v1"),null);
 });
+test("does not silently truncate durable history or sync queue", () => {
+  const session = (id) => ({
+    id,
+    startedAt: "2026-10-01T10:00:00.000Z",
+    completedAt: null,
+    name: "Workout",
+    source: "manual",
+    exercises: [{ exerciseId: "bench", sets: [{ index: 1, reps: 8, weightKg: 70, completed: false, completedAt: null, rpe: null }] }]
+  });
+  const storage = makeStorage({"gym:state:v2": JSON.stringify({
+    schemaVersion: 2,
+    activeView: "dashboard",
+    session: null,
+    history: Array.from({ length: 120 }, (_, i) => ({ id: "h-" + i, date: "2026-10-01", name: "Workout", volumeKg: 100, sets: 1, source: "manual" })),
+    syncQueue: Array.from({ length: 25 }, (_, i) => session("q-" + i)),
+    settings: { units: "kg", displayName: "Athlete" }
+  })});
+  const state = loadState(storage);
+  assert.equal(state.history.length, 120);
+  assert.equal(state.syncQueue.length, 25);
+});

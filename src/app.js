@@ -1,5 +1,5 @@
 import { EXERCISES, SAMPLE_HISTORY, WORKOUT, createEmptySession, getExercise } from "./data.js";
-import { hasApi, hasAuth, listCloudSessions, syncSession } from "./api.js";
+import { clearAuth, hasApi, hasAuth, listCloudSessions, syncSession } from "./api.js";
 import { renderAccount, wireAccount } from "./account.js";
 import { clearState, defaultState, exportState, loadState, persistState } from "./storage.js";
 import {
@@ -10,6 +10,7 @@ import {
 } from "./workout-engine.js";
 import { displayUnit, toDisplayVolume, toDisplayWeight, toKg, weightInputStep } from "./units.js";
 import { mergeHistory } from "./history-sync.js";
+import { enqueueSyncItem, removeSyncItem } from "./sync-queue.js";
 
 const REST_SECONDS = 90;
 let state = loadState();
@@ -54,12 +55,24 @@ function commitState(mutator) {
 async function refreshCloudHistory() {
   if (!hasApi() || !hasAuth()) return;
   const result = await listCloudSessions(50);
-  if (!result.ok || !Array.isArray(result.body?.sessions)) return;
+  if (!result.ok) {
+    if (result.authRequired) {
+      clearAuth();
+      announce("Cloud session expired. Sign in again to sync your pending workouts.");
+    }
+    return;
+  }
+  if (!Array.isArray(result.body?.sessions)) return;
+  const previousHistory = state.history;
   const merged = mergeHistory(state.history, result.body.sessions);
   if (JSON.stringify(merged) !== JSON.stringify(state.history)) {
     state.history = merged;
     state.sampleData = false;
-    save();
+    if (!save()) {
+      state.history = previousHistory;
+      announce("Cloud history was received but could not be saved on this device.");
+      return;
+    }
     render();
   }
 }
@@ -68,9 +81,20 @@ async function flushSyncQueue() {
   if (hasApi() && hasAuth() && state.syncQueue?.length) {
     for (const session of [...state.syncQueue]) {
       const result = await syncSession(session);
-      if (!result.ok) break;
-      state.syncQueue = state.syncQueue.filter((item) => item.id !== session.id);
-      save();
+      if (!result.ok) {
+        if (result.authRequired) {
+          clearAuth();
+          announce("Cloud session expired. Sign in again to sync your pending workouts.");
+        }
+        break;
+      }
+      const previousQueue = state.syncQueue;
+      state.syncQueue = removeSyncItem(state.syncQueue, session.id);
+      if (!save()) {
+        state.syncQueue = previousQueue;
+        announce("Cloud sync succeeded, but the pending queue could not be saved locally. It will remain pending in this tab.");
+        break;
+      }
     }
   }
   await refreshCloudHistory();
@@ -201,15 +225,27 @@ async function finishSession() {
   if (hasApi() && hasAuth()) {
     const sync = await syncSession(finishedSession);
     if (sync.ok) {
-      state.syncQueue = (state.syncQueue || []).filter((item) => item.id !== finishedSession.id);
-      if (save()) announce("Session saved locally and synced.");
+      const previousQueue = state.syncQueue;
+      state.syncQueue = removeSyncItem(state.syncQueue, finishedSession.id);
+      if (save()) {
+        announce("Session saved locally and synced.");
+      } else {
+        state.syncQueue = previousQueue;
+        announce("Session synced to the cloud, but local sync state could not be saved. The session remains pending in this tab and replay is idempotent.");
+      }
     } else {
-      state.syncQueue = [
-        ...(state.syncQueue || []).filter((item) => item.id !== finishedSession.id),
-        finishedSession
-      ].slice(-20);
-      save();
-      announce("Session saved locally. Cloud sync queued for the next connection.");
+      if (sync.authRequired) {
+        clearAuth();
+      }
+      const queued = enqueueSyncItem(state.syncQueue, finishedSession);
+      state.syncQueue = queued;
+      if (save()) {
+        announce(sync.authRequired
+          ? "Session saved locally. Cloud session expired; sign in again to sync this workout."
+          : "Session saved locally. Cloud sync queued for the next connection.");
+      } else {
+        announce("Session saved locally, but the cloud retry state could not be saved on this device. Export your local data and retry cloud sync after storage is available.");
+      }
     }
   }
 }
