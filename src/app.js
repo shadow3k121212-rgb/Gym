@@ -84,8 +84,7 @@ function realHistory() {
 
 function chartHistory() {
   const history = realHistory();
-  if (history.length >= 7) return history.slice(-7);
-  return [...SAMPLE_HISTORY.map((item) => ({ ...item })), ...history].slice(-7);
+  return history.length ? history.slice(-7) : SAMPLE_HISTORY;
 }
 
 function sessionSummary() {
@@ -298,8 +297,8 @@ function dashboard() {
         </div>
         <div class="metric-row">
           <div><span class="metric-value">${history.length}</span><span class="metric-label">saved sessions</span></div>
-          <div><span class="metric-value">${history.length ? history.slice(-7).length : 0}</span><span class="metric-label">sessions in recent window</span></div>
-          <div><span class="metric-value">${history.length ? "+" + formatNumber(totalVolume / Math.max(history.length, 1) / 100, 0) + "%" : "—"}</span><span class="metric-label">data maturity</span></div>
+          <div><span class="metric-value">${history.length ? formatNumber(totalVolume / history.length / 1000, 1) + "k" : "—"}</span><span class="metric-label">avg session volume</span></div>
+          <div><span class="metric-value">${history.length ? Math.max(...history.map((item) => Number(item.sets || 0))) : "—"}</span><span class="metric-label">best set count</span></div>
         </div>
         <div class="progress-line"><span style="width:${Math.min(100, history.length ? Math.max(8, history.length * 8) : 0)}%"></span></div>
         <div class="micro-note">${history.length ? "Real logged sessions are now the source of truth for this device." : "Illustrative values are isolated from your real history and will disappear once you log your first session."}</div>
@@ -514,7 +513,6 @@ function settingsView() {
 }
 
 function render() {
-  stopRestTimer();
   const view = state.activeView === "workout" ? workoutView()
     : state.activeView === "progress" ? progressView()
     : state.activeView === "library" ? libraryView()
