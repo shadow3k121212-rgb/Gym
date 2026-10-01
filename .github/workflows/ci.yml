@@ -12,6 +12,20 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: gym
+          POSTGRES_PASSWORD: gym-ci-password
+          POSTGRES_DB: gym
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U gym -d gym"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -26,6 +40,14 @@ jobs:
 
       - name: Unit and API tests
         run: npm run test:all
+
+      - name: Fresh PostgreSQL migrations
+        env:
+          DATABASE_URL: postgresql://gym:gym-ci-password@localhost:5432/gym
+        run: |
+          npm --prefix backend run migrate
+          npm --prefix backend run migrate
+          npm --prefix backend run verify:schema
 
       - name: HTTP smoke test
         run: npm run smoke
