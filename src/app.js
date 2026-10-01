@@ -106,6 +106,10 @@ async function flushSyncQueue() {
         if (result.authRequired) {
           clearAuth();
           announce("Cloud session expired. Sign in again to sync your pending workouts.");
+        } else if (result.retryable === false) {
+          announce("Cloud sync rejected a pending workout. Your local record remains safe; fix the account or data issue before retrying.");
+        } else {
+          announce("Cloud sync is temporarily unavailable. Pending workouts remain queued.");
         }
         break;
       }
@@ -275,7 +279,9 @@ async function finishSession() {
       if (save()) {
         announce(sync.authRequired
           ? "Session saved locally. Cloud session expired; sign in again to sync this workout."
-          : "Session saved locally. Cloud sync queued for the next connection.");
+          : sync.retryable === false
+            ? "Session saved locally. Cloud rejected the sync request; the local copy remains pending."
+            : "Session saved locally. Cloud sync queued for the next connection.");
       } else {
         announce("Session saved locally, but the cloud retry state could not be saved on this device. Export your local data and retry cloud sync after storage is available.");
       }
