@@ -92,27 +92,39 @@ export function renderAccount(state) {
 
 function renderSyncRecovery(state) {
   const currentUserId = getCurrentUserId();
-  const pending = currentUserId && Array.isArray(state?.syncQueue)
-    ? state.syncQueue.filter((item) => item && item.userId === currentUserId && item.session?.id)
+  const queue = Array.isArray(state?.syncQueue) ? state.syncQueue : [];
+  const pending = currentUserId
+    ? queue.filter((item) => item && item.userId === currentUserId && item.session?.id)
     : [];
+  const legacy = queue.filter((item) => item && !item.userId && item.session?.id);
   const blocked = pending.filter((item) => item.blocked);
-  if (!pending.length) return "";
+  if (!pending.length && !legacy.length) return "";
   return `
-    <div class="panel-subsection">
-      <div class="eyebrow">CLOUD RECOVERY</div>
-      <strong>${pending.length} workout${pending.length === 1 ? "" : "s"} retained for sync.</strong>
-      <div class="micro-note">${blocked.length
-        ? blocked.length + " blocked after a permanent sync rejection. Local records remain safe."
-        : "Transient failures retry automatically with bounded backoff."}</div>
-      ${blocked.length ? blocked.map((item) => `
-        <div class="session-row">
-          <div>
-            <strong>${escapeHtml(item.session.name || "Workout")}</strong>
-            <span class="micro-note">${escapeHtml(item.lastError || "Manual retry required.")}</span>
-          </div>
-          <button class="text-button" data-retry-sync="${escapeHtml(item.session.id)}">Retry</button>
-        </div>`).join("") : ""}
-    </div>
+    ${pending.length ? `
+      <div class="panel-subsection">
+        <div class="eyebrow">CLOUD RECOVERY</div>
+        <strong>${pending.length} workout${pending.length === 1 ? "" : "s"} retained for sync.</strong>
+        <div class="micro-note">${blocked.length
+          ? blocked.length + " blocked after a permanent sync rejection. Local records remain safe."
+          : "Transient failures retry automatically with bounded backoff."}</div>
+        ${blocked.length ? blocked.map((item) => `
+          <div class="session-row">
+            <div>
+              <strong>${escapeHtml(item.session.name || "Workout")}</strong>
+              <span class="micro-note">${escapeHtml(item.lastError || "Manual retry required.")}</span>
+            </div>
+            <button class="text-button" data-retry-sync="${escapeHtml(item.session.id)}">Retry</button>
+          </div>`).join("") : ""}
+      </div>
+    ` : ""}
+    ${legacy.length ? `
+      <div class="panel-subsection">
+        <div class="eyebrow">LOCAL-ONLY RECOVERY</div>
+        <strong>${legacy.length} older workout${legacy.length === 1 ? "" : "s"} are not linked to an account.</strong>
+        <div class="micro-note">They remain safely local and will never be auto-assigned to the signed-in account. Export your data before any manual migration.</div>
+        <button class="secondary-button full" data-action="export">Export local data</button>
+      </div>
+    ` : ""}
   `;
 }
 
