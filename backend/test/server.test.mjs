@@ -297,3 +297,31 @@ test("rejects malformed pagination cursors and limits", async (t) => {
   assert.equal(badCursor.status, 400);
   assert.equal(badLimit.status, 400);
 });
+test("rejects reusing a session id under a different idempotency key", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST", body:JSON.stringify({email:"sessionid@example.com",password:"correct horse battery staple"})
+  });
+  const token = registered.body.accessToken;
+  const session = {
+    id:"123e4567-e89b-12d3-a456-426614174099",
+    startedAt:"2026-10-01T16:00:00Z",
+    completedAt:null,
+    source:"manual",
+    name:"Stable ID",
+    exercises:[]
+  };
+  const first = await request(testServer.base, "/v1/sessions", {
+    method:"POST",
+    headers:{authorization:`Bearer ${token}`,"idempotency-key":"session-id-first-123456"},
+    body:JSON.stringify(session)
+  });
+  const second = await request(testServer.base, "/v1/sessions", {
+    method:"POST",
+    headers:{authorization:`Bearer ${token}`,"idempotency-key":"session-id-second-123456"},
+    body:JSON.stringify(session)
+  });
+  assert.equal(first.status, 201);
+  assert.equal(second.status, 409);
+});
