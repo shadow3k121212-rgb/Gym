@@ -229,8 +229,8 @@ function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
       }
 
       if (path === "/v1/auth/logout-all" && req.method === "POST") {
-        const count = await repo.revokeAllAuthSessions(user.id, auth.sessionId, "logout-all");
-        return send(res, 200, { revoked:count }, { ...cors, "x-request-id":id });
+        const count = await repo.revokeAllAuthSessions(user.id, null, "logout-all");
+        return send(res, 200, { revoked:count }, { ...cors, "x-request-id":id, "set-cookie":clearRefreshCookie() });
       }
 
       if (path === "/v1/auth/sessions" && req.method === "GET") {
