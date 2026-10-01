@@ -224,16 +224,21 @@ async function finishSession() {
   const completedAt = new Date().toISOString();
   const previous = structuredClone(state);
   const finishedSession = structuredClone(state.session);
+  const sessionOwnerId = getCurrentUserId();
   finishedSession.completedAt = completedAt;
   state.session.completedAt = completedAt;
-  state.history = [...realHistory(), {
-    id: state.session.id,
-    date: completedAt.slice(0, 10),
-    name: state.session.name,
-    volumeKg: Math.round(summary.volumeKg * 10) / 10,
-    sets: summary.completedSets,
-    source: "manual"
-  }];
+  state.history = [
+    ...state.history.filter((entry) => entry.id !== state.session.id),
+    {
+      id: state.session.id,
+      date: completedAt.slice(0, 10),
+      name: state.session.name,
+      volumeKg: Math.round(summary.volumeKg * 10) / 10,
+      sets: summary.completedSets,
+      source: "manual",
+      ...(sessionOwnerId ? { cloudOwnerId: sessionOwnerId } : {})
+    }
+  ];
   state.session = null;
   state.activeView = "dashboard";
   state.sampleData = false;
@@ -250,20 +255,13 @@ async function finishSession() {
   render();
 
   if (hasApi() && hasAuth()) {
+    const syncUserId = sessionOwnerId;
     const sync = await syncSession(finishedSession);
     if (sync.ok) {
       const previousQueue = state.syncQueue;
       state.syncQueue = removeSyncItem(state.syncQueue, finishedSession.id);
       if (save()) {
-        state.history = state.history.map((entry) =>
-          entry.id === finishedSession.id ? { ...entry, cloudOwnerId: getCurrentUserId() } : entry
-        );
-        if (!save()) {
-          state.syncQueue = previousQueue;
-          announce("Cloud sync succeeded, but the synced history marker could not be saved locally.");
-        } else {
-          announce("Session saved locally and synced.");
-        }
+        announce("Session saved locally and synced.");
       } else {
         state.syncQueue = previousQueue;
         announce("Cloud sync succeeded, but local sync state could not be persisted. The cloud copy is safe and replay is idempotent.");
@@ -272,10 +270,7 @@ async function finishSession() {
       if (sync.authRequired) {
         clearAuth();
       }
-      const queued = enqueueSyncItem(state.syncQueue, finishedSession, getCurrentUserId());
-      state.history = state.history.map((entry) =>
-        entry.id === finishedSession.id ? { ...entry, cloudOwnerId: getCurrentUserId() } : entry
-      );
+      const queued = enqueueSyncItem(state.syncQueue, finishedSession, syncUserId);
       state.syncQueue = queued;
       if (save()) {
         announce(sync.authRequired
