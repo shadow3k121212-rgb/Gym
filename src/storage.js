@@ -8,6 +8,7 @@ export function defaultState(history = []) {
     session: null,
     history,
     sampleData: history.length > 0,
+    syncQueue: [],
     settings: { units: "kg", displayName: "Athlete" }
   };
 }
@@ -33,7 +34,23 @@ function migrateLegacy(legacy) {
 
 export function loadState(storage = globalThis.localStorage) {
   const current = safeParse(storage?.getItem?.(STORAGE_KEY));
-  if (current?.schemaVersion === 2) return current;
+  if (current?.schemaVersion === 2) {
+    const base = defaultState();
+    return {
+      ...base,
+      ...current,
+      history: Array.isArray(current.history) ? current.history : [],
+      syncQueue: Array.isArray(current.syncQueue) ? current.syncQueue.slice(0, 20) : [],
+      settings: {
+        ...base.settings,
+        ...(current.settings || {}),
+        units: current.settings?.units === "lb" ? "lb" : "kg",
+        displayName: typeof current.settings?.displayName === "string" && current.settings.displayName.trim()
+          ? current.settings.displayName.slice(0, 50)
+          : "Athlete"
+      }
+    };
+  }
   const legacy = migrateLegacy(safeParse(storage?.getItem?.(LEGACY_KEY)));
   if (legacy) {
     persistState(legacy, storage);
