@@ -118,20 +118,49 @@ export class PostgresRepository {
     return result.rows;
   }
 
-  async createMovementEvent(userId, event) {
-    const result = await this.pool.query(
-      `insert into movement_events
-       (id,session_id,exercise_id,schema_version,source,occurred_at,confidence,model,metrics_json)
-       select $1,$2,$3,$4,$5,$6,$7,$8,$9
-       where exists (select 1 from workout_sessions where id=$2 and user_id=$10)
-       returning id,session_id,exercise_id,schema_version,source,occurred_at,confidence,model,metrics_json`,
-      [randomUUID(),event.sessionId,event.exerciseId,event.schemaVersion,event.source,event.timestamp,event.confidence,event.model,event.metrics,userId]
-    );
-    if (!result.rowCount) {
-      const error = new Error("Session not found.");
-      error.code = "NOT_FOUND";
+  async createMovementEvent(userId, event, idempotencyKey) {
+    const client = await this.pool.connect();
+    const requestHash = idempotencyHash(event);
+    try {
+      await client.query("begin");
+      const inserted = await client.query(
+        `insert into movement_events
+          (id,session_id,exercise_id,schema_version,source,occurred_at,confidence,model,metrics_json,idempotency_key,idempotency_request_hash)
+         select $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11
+         where exists (select 1 from workout_sessions where id=$2 and user_id=$12)
+         on conflict (session_id,idempotency_key) do nothing
+         returning id,session_id,exercise_id,schema_version,source,occurred_at,confidence,model,metrics_json,idempotency_key,idempotency_request_hash`,
+        [randomUUID(),event.sessionId,event.exerciseId,event.schemaVersion,event.source,event.timestamp,event.confidence,event.model,event.metrics,idempotencyKey,requestHash,userId]
+      );
+      if (!inserted.rowCount) {
+        const existing = await client.query(
+          `select id,session_id,exercise_id,schema_version,source,occurred_at,confidence,model,metrics_json,idempotency_key,idempotency_request_hash
+           from movement_events
+           where session_id=$1 and idempotency_key=$2
+           for update`,
+          [event.sessionId,idempotencyKey]
+        );
+        if (!existing.rowCount) throw new Error("Movement-event replay could not be resolved.");
+        const row = existing.rows[0];
+        if (row.idempotency_request_hash && row.idempotency_request_hash !== requestHash) {
+          const error = new Error("Idempotency key was already used with a different request payload.");
+          error.code = "IDEMPOTENCY_CONFLICT";
+          throw error;
+        }
+        if (!row.idempotency_request_hash) {
+          await client.query("update movement_events set idempotency_request_hash=$1 where id=$2", [requestHash,row.id]);
+        }
+        await client.query("commit");
+        return { existing:true, event:row };
+      }
+      const eventRow=inserted.rows[0];
+      await client.query("commit");
+      return { existing:false, event:eventRow };
+    } catch (error) {
+      await client.query("rollback");
       throw error;
+    } finally {
+      client.release();
     }
-    return result.rows[0];
   }
 }
