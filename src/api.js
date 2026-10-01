@@ -1,15 +1,33 @@
 const config = globalThis.__GYM_CONFIG__ || {};
 export const apiBaseUrl = String(config.apiBaseUrl || "").replace(/\/$/, "");
 const TOKEN_KEY = "gym:access-token";
+const USER_ID_KEY = "gym:auth-user-id";
 
 function getStoredToken() {
   return globalThis.sessionStorage?.getItem(TOKEN_KEY) || null;
 }
 
+function getStoredUserId() {
+  return globalThis.sessionStorage?.getItem(USER_ID_KEY) || null;
+}
+
 export function hasApi() { return Boolean(apiBaseUrl); }
-export function hasAuth() { return Boolean(getStoredToken()); }
-export function setAuthToken(token) { if (token) globalThis.sessionStorage?.setItem(TOKEN_KEY, token); }
-export function clearAuth() { globalThis.sessionStorage?.removeItem(TOKEN_KEY); }
+export function hasAuth() { return Boolean(getStoredToken() && getStoredUserId()); }
+export function setAuthToken(token) {
+  if (token) globalThis.sessionStorage?.setItem(TOKEN_KEY, token);
+}
+export function setCurrentUserId(userId) {
+  if (typeof userId === "string" && userId) globalThis.sessionStorage?.setItem(USER_ID_KEY, userId);
+}
+
+export function getCurrentUserId() {
+  return getStoredUserId();
+}
+
+export function clearAuth() {
+  globalThis.sessionStorage?.removeItem(TOKEN_KEY);
+  globalThis.sessionStorage?.removeItem(USER_ID_KEY);
+}
 
 async function request(path, options = {}) {
   if (!apiBaseUrl) return { ok:false, message:"Cloud API is not configured." };
@@ -29,7 +47,11 @@ async function authenticate(path, email, password) {
   const result = await request(path, { method:"POST", body:JSON.stringify({ email, password }) });
   if (!result.ok) return result;
   if (!result.body?.accessToken) return { ok:false, message:"API did not return an access token." };
+  if (typeof result.body?.user?.id !== "string" || !result.body.user.id) {
+    return { ok:false, message:"API did not return a user identity." };
+  }
   setAuthToken(result.body.accessToken);
+  setCurrentUserId(result.body.user.id);
   return result;
 }
 
