@@ -67,6 +67,43 @@ test("does not silently truncate durable history or sync queue", () => {
   assert.equal(state.history.length, 120);
   assert.equal(state.syncQueue.length, 25);
 });
+test("persists durable sync retry metadata across reloads", () => {
+  const owner = "123e4567-e89b-12d3-a456-426614174000";
+  const retryAt = "2026-10-01T10:00:05.000Z";
+  const session = {
+    id:"123e4567-e89b-12d3-a456-426614174003",
+    startedAt:"2026-10-01T10:00:00.000Z",
+    completedAt:"2026-10-01T10:05:00.000Z",
+    name:"Retry me",
+    source:"manual",
+    exercises:[{exerciseId:"bench",sets:[{index:1,reps:8,weightKg:70,completed:true,completedAt:"2026-10-01T10:05:00.000Z",rpe:8}]}]
+  };
+  const storage = makeStorage({"gym:state:v2": JSON.stringify({
+    schemaVersion:2,
+    activeView:"dashboard",
+    session:null,
+    history:[],
+    syncQueue:[{
+      userId:owner,
+      session,
+      attempts:3,
+      nextAttemptAt:retryAt,
+      lastError:"network unavailable",
+      blocked:false
+    }],
+    settings:{units:"kg",displayName:"Athlete"}
+  })});
+  const state = loadState(storage);
+  assert.deepEqual(state.syncQueue, [{
+    userId:owner,
+    session,
+    attempts:3,
+    nextAttemptAt:retryAt,
+    lastError:"network unavailable",
+    blocked:false
+  }]);
+});
+
 test("persists sync ownership while preserving legacy unowned entries", () => {
   const owner = "123e4567-e89b-12d3-a456-426614174000";
   const storage = makeStorage({"gym:state:v2": JSON.stringify({
