@@ -36,3 +36,9 @@ export function syncSession(session) {
   if (!apiBaseUrl || !hasAuth()) return Promise.resolve({ ok:false, message:"Cloud sync is not configured." });
   return request("/v1/sessions", { method:"POST", headers:{ "idempotency-key":"gym-" + session.id }, body:JSON.stringify(session) });
 }
+
+export function listCloudSessions(limit = 50) {
+  if (!apiBaseUrl || !hasAuth()) return Promise.resolve({ ok:false, message:"Cloud sync is not configured." });
+  const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 50);
+  return request("/v1/sessions?limit=" + safeLimit);
+}
