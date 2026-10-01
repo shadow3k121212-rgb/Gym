@@ -6,7 +6,7 @@ function validIsoDate(value) {
   return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
 }
 
-export function remoteSessionToHistory(session) {
+export function remoteSessionToHistory(session, cloudOwnerId = null) {
   if (!session || typeof session.id !== "string" || !session.id) return null;
   const dateSource = session.completed_at || session.started_at;
   const isoDate = validIsoDate(dateSource);
@@ -20,11 +20,14 @@ export function remoteSessionToHistory(session) {
     name: typeof session.name === "string" && session.name.trim() ? session.name.slice(0, 120) : "Workout",
     volumeKg: Math.round(volume * 10) / 10,
     sets: Number.isFinite(sets) ? Math.max(0, Math.min(1000, Math.floor(sets))) : 0,
-    source
+    source,
+    ...(typeof cloudOwnerId === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cloudOwnerId)
+      ? { cloudOwnerId: cloudOwnerId.toLowerCase() }
+      : {})
   };
 }
 
-export function mergeHistory(localHistory, remoteSessions) {
+export function mergeHistory(localHistory, remoteSessions, cloudOwnerId = null) {
   const merged = new Map(
     (Array.isArray(localHistory) ? localHistory : [])
       .filter((item) => item && item.id)
@@ -32,7 +35,7 @@ export function mergeHistory(localHistory, remoteSessions) {
   );
 
   for (const remote of Array.isArray(remoteSessions) ? remoteSessions : []) {
-    const mapped = remoteSessionToHistory(remote);
+    const mapped = remoteSessionToHistory(remote, cloudOwnerId);
     if (mapped) merged.set(mapped.id, { ...(merged.get(mapped.id) || {}), ...mapped });
   }
 
