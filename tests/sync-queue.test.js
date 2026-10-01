@@ -55,7 +55,7 @@ test("remove deletes only the requested session", () => {
     { userId:null, session:session("q-1"), attempts:0, nextAttemptAt:null, lastError:null, blocked:false },
     { userId:null, session:session("q-3"), attempts:0, nextAttemptAt:null, lastError:null, blocked:false }
   ]);
-  assert.deepEqual(removeSyncItem(queue, "missing"), queue);
+  assert.deepEqual(removeSyncItem(queue, "missing"), normalizeSyncQueue(queue));
 });
 
 test("invalid owner ids are treated as unowned and cannot be adopted implicitly", () => {
@@ -66,7 +66,7 @@ test("invalid owner ids are treated as unowned and cannot be adopted implicitly"
 test("legacy raw sessions remain preserved as unowned queue entries", () => {
   assert.deepEqual(
     normalizeSyncQueue([session("legacy-1")]),
-    [{ userId:null, session:session("legacy-1") }]
+    [{ userId:null, session:session("legacy-1"), attempts:0, nextAttemptAt:null, lastError:null, blocked:false }]
   );
 });
 
