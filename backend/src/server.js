@@ -77,7 +77,7 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
       "access-control-allow-headers": "Authorization, Content-Type, Idempotency-Key, X-Request-Id",
       "access-control-allow-methods": "GET,POST,OPTIONS"
     };
-    if (req.method === "OPTIONS") return send(res, 204, {}, cors);
+    if (req.method === "OPTIONS") return send(res, 204, {}, { ...cors, "x-request-id": id });
 
     const path = new URL(req.url, "http://gym.local").pathname;
     const started = Date.now();
@@ -86,12 +86,12 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
       if (path === "/v1/health" && req.method === "GET") {
         let database = false;
         try { database = await repo.health(); } catch {}
-        return send(res, 200, { ok: true, service: "gym-api", database, requestId: id }, cors);
+        return send(res, 200, { ok: true, service: "gym-api", database, requestId: id }, { ...cors, "x-request-id": id });
       }
 
       if (path === "/v1/ready" && req.method === "GET") {
         const database = await repo.health();
-        return send(res, database ? 200 : 503, { ready: database, service: "gym-api", requestId: id }, cors);
+        return send(res, database ? 200 : 503, { ready: database, service: "gym-api", requestId: id }, { ...cors, "x-request-id": id });
       }
 
       if (path === "/v1/auth/register" && req.method === "POST") {
