@@ -8,11 +8,11 @@ GYM is a **local-first workout logging beta with an optional authenticated API f
 
 - [ ] Replace the avatar placeholder and demo copy with product-ready onboarding.
 - [ ] Confirm all seeded history and coaching metrics are clearly labelled as sample data.
-- [ ] Verify session start, set completion, session finish, refresh, export, and reset.
+- [ ] Verify session start, set completion, session finish, auth restore/refresh, export, local reset, password recovery, and account deletion.
 - [ ] Verify mobile navigation and layouts at narrow widths.
 - [ ] Verify keyboard operation, visible focus, contrast, and screen-reader labels.
 - [ ] Verify data export and explain browser-local storage limitations.
-- [ ] Add a public privacy notice and support contact appropriate to the launch.
+- [ ] Add a public privacy notice, account recovery delivery service, deletion/retention notice, and support contact appropriate to the launch.
 - [ ] Confirm domain, HTTPS, cache headers, and deployment rollback procedure.
 - [ ] Run CI and manually inspect the deployed build.
 - [ ] Invite a small cohort before broad promotion.
