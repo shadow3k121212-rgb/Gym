@@ -655,3 +655,5 @@ render();
 window.addEventListener("online", () => { void flushSyncQueue(); });
 window.addEventListener("gym:auth-changed", () => { void flushSyncQueue(); });
 void flushSyncQueue();
+window.addEventListener("gym:auth-changed", () => { void flushSyncQueue(); });
+void flushSyncQueue();
