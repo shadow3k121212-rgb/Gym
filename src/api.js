@@ -135,7 +135,7 @@ export function register(email, password) {
 }
 
 export async function logout() {
-  const result = await rawRequest("/v1/auth/logout", { method:"POST" }, false);
+  const result = await rawRequest("/v1/auth/logout", { method:"POST" });
   clearAuth();
   return result.ok ? result : { ...result, ok:false };
 }
@@ -163,7 +163,7 @@ export async function deleteAccount(password) {
   const result = await request("/v1/auth/delete-account", {
     method:"POST",
     body:JSON.stringify({ password })
-  }, false);
+  });
   if (result.ok || result.authRequired) clearAuth();
   return result;
 }
