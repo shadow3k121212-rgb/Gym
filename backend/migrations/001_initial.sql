@@ -1,5 +1,3 @@
-BEGIN;
-
 CREATE TABLE users (
   id UUID PRIMARY KEY,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -95,5 +93,3 @@ CREATE TABLE consents (
   revoked_at TIMESTAMPTZ
 );
 CREATE INDEX consents_user_purpose_idx ON consents(user_id, purpose, granted_at DESC);
-
-COMMIT;
