@@ -151,6 +151,27 @@ test("rejects reusing an idempotency key with a different payload", async (t) =>
   assert.match(second.body.error.message, /different request payload/);
 });
 
+test("rejects chronologically impossible timestamps", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST", body:JSON.stringify({email:"chronology@example.com",password:"correct horse battery staple"})
+  });
+  const response = await request(testServer.base, "/v1/sessions", {
+    method:"POST",
+    headers:{authorization:`Bearer ${registered.body.accessToken}`,"idempotency-key":"chronology-123456789"},
+    body:JSON.stringify({
+      id:"123e4567-e89b-12d3-a456-426614174006",
+      startedAt:"2026-10-01T14:00:00Z",
+      completedAt:"2026-10-01T13:59:00Z",
+      source:"manual",
+      name:"Impossible Time",
+      exercises:[]
+    })
+  });
+  assert.equal(response.status,400);
+});
+
 test("requires timestamps to match set completion state", async (t) => {
   const testServer = await makeServer();
   t.after(() => testServer.server.close());
