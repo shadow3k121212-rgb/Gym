@@ -19,6 +19,14 @@ if (!jwtSecret || jwtSecret.length < 32) {
   console.error("JWT_SECRET must be at least 32 characters.");
   process.exit(1);
 }
+if (process.env.NODE_ENV === "production" && !process.env.PASSWORD_RESET_WEBHOOK_URL) {
+  console.error("PASSWORD_RESET_WEBHOOK_URL is required in production.");
+  process.exit(1);
+}
+if (process.env.NODE_ENV === "production" && !process.env.PASSWORD_RESET_WEBHOOK_SECRET) {
+  console.error("PASSWORD_RESET_WEBHOOK_SECRET is required in production.");
+  process.exit(1);
+}
 
 const repo = new PostgresRepository();
 const handler = createApi({ repo, jwtSecret, corsOrigin });
