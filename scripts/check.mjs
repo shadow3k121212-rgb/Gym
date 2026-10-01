@@ -18,7 +18,7 @@ if (/(^|[^$])\$\([^)]*\)\.forEach/.test(appSource)) {
 for (const file of [
   "src/app.js","src/sw.js","src/workout-engine.js","src/data.js","src/storage.js","src/sync-queue.js","src/units.js","src/history-sync.js",
   "backend/server.mjs","backend/src/server.js","backend/src/auth.js","backend/src/validation.js",
-  "backend/src/repository.js","backend/src/memory-repository.js","backend/scripts/migrate.mjs","backend/scripts/verify-schema.mjs",
+  "backend/src/pagination.js","backend/src/repository.js","backend/src/memory-repository.js","backend/scripts/migrate.mjs","backend/scripts/verify-schema.mjs",
   "scripts/build.mjs","scripts/dev.mjs"
 ]) {
   execFileSync(process.execPath, ["--check", file], { stdio: "inherit" });
