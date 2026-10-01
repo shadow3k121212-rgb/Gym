@@ -37,9 +37,17 @@ async function request(path, options = {}) {
   try {
     const response = await fetch(apiBaseUrl + path, { ...options, headers });
     const body = await response.json().catch(() => ({}));
-    return response.ok ? { ok:true, status:response.status, body } : { ok:false, status:response.status, authRequired:response.status === 401, message:body?.error?.message || "Request failed." };
+    if (response.ok) return { ok:true, status:response.status, body };
+    const retryable = response.status === 408 || response.status === 429 || (response.status >= 500 && response.status <= 599);
+    return {
+      ok:false,
+      status:response.status,
+      authRequired:response.status === 401,
+      retryable,
+      message:body?.error?.message || "Request failed."
+    };
   } catch {
-    return { ok:false, message:"GYM API is unreachable." };
+    return { ok:false, retryable:true, message:"GYM API is unreachable." };
   }
 }
 
