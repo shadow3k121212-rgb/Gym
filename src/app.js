@@ -1,5 +1,5 @@
 import { EXERCISES, SAMPLE_HISTORY, WORKOUT, createEmptySession, getExercise } from "./data.js";
-import { clearAuth, hasApi, hasAuth, listCloudSessions, syncSession } from "./api.js";
+import { clearAuth, getCurrentUserId, hasApi, hasAuth, listCloudSessions, syncSession } from "./api.js";
 import { renderAccount, wireAccount } from "./account.js";
 import { clearState, defaultState, exportState, loadState, persistState } from "./storage.js";
 import {
@@ -83,7 +83,7 @@ async function refreshCloudHistory() {
   }
 
   const previousHistory = state.history;
-  const merged = mergeHistory(state.history, allSessions);
+  const merged = mergeHistory(state.history, allSessions, getCurrentUserId());
   if (JSON.stringify(merged) !== JSON.stringify(state.history)) {
     state.history = merged;
     state.sampleData = false;
@@ -97,9 +97,11 @@ async function refreshCloudHistory() {
 }
 
 async function flushSyncQueue() {
-  if (hasApi() && hasAuth() && state.syncQueue?.length) {
-    for (const session of [...state.syncQueue]) {
-      const result = await syncSession(session);
+  const currentUserId = getCurrentUserId();
+  if (hasApi() && hasAuth() && currentUserId && state.syncQueue?.length) {
+    for (const item of [...state.syncQueue]) {
+      if (item.userId !== currentUserId) continue;
+      const result = await syncSession(item.session);
       if (!result.ok) {
         if (result.authRequired) {
           clearAuth();
@@ -108,10 +110,10 @@ async function flushSyncQueue() {
         break;
       }
       const previousQueue = state.syncQueue;
-      state.syncQueue = removeSyncItem(state.syncQueue, session.id);
+      state.syncQueue = removeSyncItem(state.syncQueue, item.session.id);
       if (!save()) {
         state.syncQueue = previousQueue;
-        announce("Cloud sync succeeded, but the pending queue could not be saved locally. It will remain pending in this tab.");
+        announce("Cloud sync succeeded, but the pending queue could not be saved locally. It remains pending for this account.");
         break;
       }
     }
@@ -181,7 +183,13 @@ function currentExercises() {
 }
 
 function realHistory() {
-  return Array.isArray(state.history) ? state.history.filter((entry) => entry.source !== "sample") : [];
+  const currentUserId = getCurrentUserId();
+  return Array.isArray(state.history)
+    ? state.history.filter((entry) =>
+        entry.source !== "sample" &&
+        (!entry.cloudOwnerId || entry.cloudOwnerId === currentUserId)
+      )
+    : [];
 }
 
 function chartHistory() {
@@ -247,16 +255,27 @@ async function finishSession() {
       const previousQueue = state.syncQueue;
       state.syncQueue = removeSyncItem(state.syncQueue, finishedSession.id);
       if (save()) {
-        announce("Session saved locally and synced.");
+        state.history = state.history.map((entry) =>
+          entry.id === finishedSession.id ? { ...entry, cloudOwnerId: getCurrentUserId() } : entry
+        );
+        if (!save()) {
+          state.syncQueue = previousQueue;
+          announce("Cloud sync succeeded, but the synced history marker could not be saved locally.");
+        } else {
+          announce("Session saved locally and synced.");
+        }
       } else {
         state.syncQueue = previousQueue;
-        announce("Session synced to the cloud, but local sync state could not be saved. The session remains pending in this tab and replay is idempotent.");
+        announce("Cloud sync succeeded, but local sync state could not be persisted. The cloud copy is safe and replay is idempotent.");
       }
     } else {
       if (sync.authRequired) {
         clearAuth();
       }
-      const queued = enqueueSyncItem(state.syncQueue, finishedSession);
+      const queued = enqueueSyncItem(state.syncQueue, finishedSession, getCurrentUserId());
+      state.history = state.history.map((entry) =>
+        entry.id === finishedSession.id ? { ...entry, cloudOwnerId: getCurrentUserId() } : entry
+      );
       state.syncQueue = queued;
       if (save()) {
         announce(sync.authRequired
