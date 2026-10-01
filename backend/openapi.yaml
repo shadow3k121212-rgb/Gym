@@ -44,6 +44,12 @@ paths:
       responses:
         "200": { description: Authenticated }
         "401": { description: Invalid credentials }
+  /v1/ready:
+    get:
+      operationId: ready
+      responses:
+        "200": { description: Service ready }
+        "503": { description: Database unavailable }
   /v1/me:
     get:
       security: [{ bearerAuth: [] }]

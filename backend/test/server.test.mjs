@@ -36,6 +36,17 @@ test("registers, authenticates, and reads the current user", async (t) => {
   assert.equal(me.body.user.email, "athlete@example.com");
 });
 
+test("exposes liveness and readiness separately", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const health = await request(testServer.base, "/v1/health");
+  const ready = await request(testServer.base, "/v1/ready");
+  assert.equal(health.status, 200);
+  assert.equal(health.body.ok, true);
+  assert.equal(ready.status, 200);
+  assert.equal(ready.body.ready, true);
+});
+
 test("rejects weak passwords", async (t) => {
   const testServer = await makeServer();
   t.after(() => testServer.server.close());
@@ -43,6 +54,22 @@ test("rejects weak passwords", async (t) => {
     method:"POST", body:JSON.stringify({email:"athlete@example.com",password:"too-short"})
   });
   assert.equal(response.status, 400);
+});
+
+test("rate-limits repeated invalid logins", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  await request(testServer.base, "/v1/auth/register", {
+    method:"POST", body:JSON.stringify({email:"ratelimit@example.com",password:"correct horse battery staple"})
+  });
+  let response;
+  for (let i=0; i<6; i += 1) {
+    response = await request(testServer.base, "/v1/auth/login", {
+      method:"POST", body:JSON.stringify({email:"ratelimit@example.com",password:"incorrect password 123"})
+    });
+  }
+  assert.equal(response.status, 429);
+  assert.ok(response.body.error.details.retryAfter > 0);
 });
 
 test("persists a session and returns the same result for the same idempotency key", async (t) => {

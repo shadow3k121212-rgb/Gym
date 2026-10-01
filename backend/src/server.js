@@ -32,6 +32,29 @@ function requestId(req) {
   return req.headers["x-request-id"] || randomUUID();
 }
 
+function createRateLimiter() {
+  const buckets = new Map();
+  return {
+    allow(key, now = Date.now()) {
+      const current = buckets.get(key);
+      if (!current || now >= current.resetAt) return { allowed:true };
+      if (current.failures < 5) return { allowed:true };
+      return { allowed:false, retryAfter:Math.ceil((current.resetAt - now) / 1000) };
+    },
+    fail(key, now = Date.now()) {
+      const current = buckets.get(key);
+      if (!current || now >= current.resetAt) {
+        buckets.set(key, { failures:1, resetAt:now + 15 * 60 * 1000 });
+        return;
+      }
+      current.failures += 1;
+    },
+    clear(key) {
+      buckets.delete(key);
+    }
+  };
+}
+
 function okError(res, status, message, requestIdValue, details = undefined) {
   send(res, status, { error: { message, requestId: requestIdValue, ...(details ? { details } : {}) } }, { "x-request-id": requestIdValue });
 }
@@ -86,12 +109,19 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
       }
 
       if (path === "/v1/auth/login" && req.method === "POST") {
+        const key = req.socket.remoteAddress || "unknown";
+        const limit = authFailures.allow(key);
+        if (!limit.allowed) return okError(res, 429, "Too many failed login attempts. Try again later.", id, { retryAfter: limit.retryAfter });
         const body = await readJson(req);
         const email = normalizeEmail(body.email);
         const password = validatePassword(body.password);
         const user = await repo.getUserByEmail(email);
         const valid = user?.status === "active" && user?.password_hash && await verifyPassword(password, user.password_salt, user.password_hash);
-        if (!valid) return okError(res, 401, "Invalid email or password.", id);
+        if (!valid) {
+          authFailures.fail(key);
+          return okError(res, 401, "Invalid email or password.", id);
+        }
+        authFailures.clear(key);
         const token = issueAccessToken(user.id, jwtSecret);
         return send(res, 200, { user:{ id:user.id, email:user.email }, accessToken:token }, { ...cors, "x-request-id":id });
       }
@@ -100,6 +130,11 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
       if (!auth) return okError(res, 401, "Authentication required.", id);
       const user = await repo.getUserById(auth.userId);
       if (!user || user.status !== "active") return okError(res, 401, "Account is not active.", id);
+
+      if (path === "/v1/ready" && req.method === "GET") {
+        const database = await repo.health();
+        return send(res, database ? 200 : 503, { ready:database, service:"gym-api", requestId:id }, { ...cors, "x-request-id":id });
+      }
 
       if (path === "/v1/me" && req.method === "GET") {
         return send(res, 200, { user:{ id:user.id, email:user.email, createdAt:user.created_at } }, { ...cors, "x-request-id":id });
