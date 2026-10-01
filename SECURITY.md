@@ -10,7 +10,8 @@ The current API foundation includes:
 
 - server-side request validation and a 256 KiB JSON body limit
 - password hashing with Node scrypt and per-user salts
-- short-lived signed access tokens
+- short-lived signed access tokens bound to revocable server-side sessions
+- rotating HttpOnly refresh sessions with reuse detection
 - per-user session authorization checks
 - idempotent session writes with payload-hash conflict detection
 - request IDs, no-store/cache and baseline security headers
@@ -18,16 +19,15 @@ The current API foundation includes:
 - PostgreSQL migrations and parameterized queries
 - raw camera video excluded from the API data model by default
 
-## Production blockers before handling real user data
+## Remaining production blockers before handling real user data
 
-1. Deploy behind TLS with HSTS and a fail-closed production CORS allow-list.
-2. Replace browser-held access-token persistence with a secure refresh/session mechanism, such as an HttpOnly secure cookie plus short-lived in-memory access state.
-3. Add centralized rate limiting / abuse protection at the edge and account-level controls for registration and authentication.
-4. Add email verification, account recovery, session revocation, and device/session management.
-5. Add dependency, secret, static-analysis, and container/IaC scanning in CI and review the results as release gates.
-6. Add managed database backups, tested restore procedures, retention/deletion workflows, and audit logging.
-7. Publish privacy, consent, retention, export, and deletion policies before collecting camera-derived movement data.
-8. For computer vision, prefer on-device inference where feasible and store derived metrics with model/version/confidence metadata rather than raw video by default.
+1. Deploy behind TLS with HSTS and a fail-closed production CORS allow-list; production runtime already refuses wildcard CORS.
+2. Put password-recovery delivery behind a managed, authenticated email provider or delivery service. The API currently exposes a non-enumerating reset workflow and accepts an optional `PASSWORD_RESET_WEBHOOK_URL`; delivery configuration is still an infrastructure responsibility.
+3. Add centralized rate limiting / abuse protection at the edge and account-level controls for registration and authentication; the current process-local throttling is beta-grade.
+4. Add dependency, secret, static-analysis, and container/IaC scanning in CI and review the results as release gates.
+5. Add managed database backups, tested restore procedures, retention/deletion workflows, and operational audit review.
+6. Publish privacy, consent, retention, export, and deletion policies before collecting camera-derived movement data.
+7. For computer vision, prefer on-device inference where feasible and store derived metrics with model/version/confidence metadata rather than raw video by default.
 
 ## Reporting
 
