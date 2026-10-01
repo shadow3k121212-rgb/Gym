@@ -630,7 +630,7 @@ function wire() {
     announce("Your local data export was created.");
   }));
 
-  $("[data-action='reset-session']").forEach((button) => button.addEventListener("click", () => {
+  $$("[data-action='reset-session']").forEach((button) => button.addEventListener("click", () => {
     const confirmed = window.confirm("Discard this active workout? Logged work in this session will be removed.");
     if (!confirmed) return;
     const committed = commitState(() => {
@@ -644,11 +644,11 @@ function wire() {
     announce("Active session discarded.");
   }));
 
-  $("[data-toggle-set]").forEach((button) => button.addEventListener("click", () => {
+  $$("[data-toggle-set]").forEach((button) => button.addEventListener("click", () => {
     toggleSet(button.dataset.exercise, Number(button.dataset.set));
   }));
 
-  $("[data-action='undo-set']").forEach((button) => button.addEventListener("click", undoLastSetAction));
+  $$("[data-action='undo-set']").forEach((button) => button.addEventListener("click", undoLastSetAction));
 
   $$("[data-input]").forEach((input) => {
     input.addEventListener("change", () => {
@@ -698,7 +698,7 @@ function wire() {
 
   wireAccount({ render, announce });
 
-  $("[data-action='clear-data']").forEach((button) => button.addEventListener("click", () => {
+  $$("[data-action='clear-data']").forEach((button) => button.addEventListener("click", () => {
     const confirmed = window.confirm("Delete all local GYM data from this browser?");
     if (!confirmed) return;
     clearState();
