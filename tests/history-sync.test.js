@@ -32,3 +32,59 @@ test("merges remote truth by session id without duplicating local history", () =
   assert.equal(merged.find((item) => item.id === "1").name, "Cloud");
   assert.equal(merged.find((item) => item.id === "1").volumeKg, 560);
 });
+test("rejects malformed remote sessions without replacing valid local history", () => {
+  assert.equal(remoteSessionToHistory({
+    id:"bad-date",
+    started_at:"not-a-date",
+    completed_at:null,
+    name:"Broken",
+    source:"manual",
+    volume:"100",
+    completed_sets:"2"
+  }), null);
+  assert.equal(remoteSessionToHistory({
+    id:"bad-source",
+    started_at:"2026-10-01T12:00:00Z",
+    completed_at:null,
+    name:"Broken",
+    source:"unknown",
+    volume:"100",
+    completed_sets:"2"
+  }), null);
+  assert.equal(remoteSessionToHistory({
+    id:"bad-volume",
+    started_at:"2026-10-01T12:00:00Z",
+    completed_at:null,
+    name:"Broken",
+    source:"manual",
+    volume:"NaN",
+    completed_sets:"2"
+  }), null);
+
+  const local = [{ id:"same", date:"2026-10-01", name:"Trusted local", volumeKg:560, sets:8, source:"manual" }];
+  const merged = mergeHistory(local, [{
+    id:"same",
+    started_at:"still-invalid",
+    completed_at:null,
+    name:"Poison",
+    source:"manual",
+    volume:"1",
+    completed_sets:"1"
+  }]);
+  assert.deepEqual(merged, local);
+});
+
+test("normalizes valid remote history values deterministically", () => {
+  assert.deepEqual(
+    remoteSessionToHistory({
+      id:"valid",
+      started_at:"2026-10-01T12:00:00Z",
+      completed_at:"2026-10-01T12:45:00Z",
+      name:"",
+      source:"manual",
+      volume:"560.567",
+      completed_sets:"8.9"
+    }),
+    { id:"valid", date:"2026-10-01", name:"Workout", volumeKg:560.6, sets:8, source:"manual" }
+  );
+});
