@@ -9,7 +9,7 @@ try {
   const requiredTables = [
     "schema_migrations", "users", "user_preferences", "exercises",
     "workout_plans", "workout_plan_exercises", "workout_sessions",
-    "workout_sets", "movement_events", "consents"
+    "workout_sets", "movement_events", "consents", "auth_sessions"
   ];
 
   for (const table of requiredTables) {
@@ -22,7 +22,11 @@ try {
     ["workout_sessions", "idempotency_request_hash"],
     ["movement_events", "reps"],
     ["movement_events", "idempotency_key"],
-    ["movement_events", "idempotency_request_hash"]
+    ["movement_events", "idempotency_request_hash"],
+    ["auth_sessions", "token_hash"],
+    ["auth_sessions", "expires_at"],
+    ["auth_sessions", "revoked_at"],
+    ["auth_sessions", "family_id"]
   ];
 
   for (const [table, column] of requiredColumns) {
@@ -35,7 +39,7 @@ try {
 
   const migrations = await client.query("select version from schema_migrations order by version");
   const versions = migrations.rows.map((row) => row.version);
-  const expected = ["001", "002", "003", "004", "005", "006"];
+  const expected = ["001", "002", "003", "004", "005", "006", "007"];
   if (JSON.stringify(versions) !== JSON.stringify(expected)) throw new Error("Unexpected migration ledger: " + versions.join(","));
 
   console.log("Database schema verification passed.");
