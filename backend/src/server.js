@@ -191,6 +191,62 @@ function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
         );
       }
 
+      if (path === "/v1/auth/password-reset/request" && req.method === "POST") {
+        const key = "password-reset:" + (req.socket.remoteAddress || "unknown");
+        const limit = authLimit(authFailures, key, 5);
+        if (!limit.allowed) {
+          return send(res, 202, { accepted:true, requestId:id }, { ...cors, "x-request-id":id });
+        }
+        authFailure(authFailures, key);
+        const body = await readJson(req);
+        const email = normalizeEmail(body.email);
+        const resetUser = await repo.getUserByEmail(email);
+        if (resetUser?.status === "active") {
+          const resetToken = createRefreshToken();
+          await repo.createPasswordResetToken({
+            id:randomUUID(),
+            userId:resetUser.id,
+            tokenHash:hashRefreshToken(resetToken),
+            expiresAt:new Date(Date.now() + 30 * 60 * 1000)
+          });
+
+          const deliveryUrl = process.env.PASSWORD_RESET_WEBHOOK_URL;
+          if (deliveryUrl) {
+            try {
+              const delivery = await fetch(deliveryUrl, {
+                method:"POST",
+                headers:{"content-type":"application/json"},
+                body:JSON.stringify({
+                  email:resetUser.email,
+                  resetToken,
+                  requestId:id
+                })
+              });
+              if (!delivery.ok) console.warn(JSON.stringify({level:"warn",requestId:id,message:"Password reset delivery failed.",status:delivery.status}));
+            } catch (error) {
+              console.warn(JSON.stringify({level:"warn",requestId:id,message:"Password reset delivery unavailable.",error:error?.message}));
+            }
+          } else if (process.env.NODE_ENV !== "production") {
+            console.info(JSON.stringify({level:"info",requestId:id,message:"Password reset token created for development delivery only."}));
+          }
+        }
+        return send(res, 202, { accepted:true, requestId:id }, { ...cors, "x-request-id":id });
+      }
+
+      if (path === "/v1/auth/password-reset/confirm" && req.method === "POST") {
+        const body = await readJson(req);
+        if (typeof body.token !== "string" || body.token.length < 40 || body.token.length > 128) {
+          return okError(res, 400, "Invalid or expired password reset token.", id);
+        }
+        const password = validatePassword(body.password);
+        const credentials = await hashPassword(password);
+        const reset = await repo.resetPassword(hashRefreshToken(body.token), credentials.hash, credentials.salt);
+        if (!reset) {
+          return send(res, 400, { error:{ message:"Invalid or expired password reset token.", requestId:id } }, { ...cors, "x-request-id":id, "set-cookie":clearRefreshCookie() });
+        }
+        return send(res, 200, { reset:true }, { ...cors, "x-request-id":id, "set-cookie":clearRefreshCookie() });
+      }
+
       if (path === "/v1/auth/refresh" && req.method === "POST") {
         const rawRefreshToken = parseCookies(req)[REFRESH_COOKIE];
         if (!rawRefreshToken) return okError(res, 401, "Refresh session required.", id);
@@ -226,6 +282,19 @@ function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
 
       if (path === "/v1/me" && req.method === "GET") {
         return send(res, 200, { user:{ id:user.id, email:user.email, createdAt:user.created_at } }, { ...cors, "x-request-id":id });
+      }
+
+      if (path === "/v1/auth/delete-account" && req.method === "POST") {
+        const body = await readJson(req);
+        const password = validatePassword(body.password);
+        const credentials = await repo.getUserByEmail(user.email);
+        const validPassword = credentials?.password_hash
+          ? await verifyPassword(password, credentials.password_salt, credentials.password_hash)
+          : false;
+        if (!validPassword) return okError(res, 401, "Password confirmation failed.", id);
+        const deleted = await repo.deleteAccount(user.id);
+        if (!deleted) return okError(res, 404, "Account not found.", id);
+        return send(res, 200, { deleted:true }, { ...cors, "x-request-id":id, "set-cookie":clearRefreshCookie() });
       }
 
       if (path === "/v1/auth/logout-all" && req.method === "POST") {
