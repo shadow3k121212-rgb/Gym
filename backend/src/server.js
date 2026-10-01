@@ -304,7 +304,12 @@ function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
 
       if (path === "/v1/auth/sessions" && req.method === "GET") {
         const sessions = await repo.listAuthSessions(user.id);
-        return send(res, 200, { sessions }, { ...cors, "x-request-id":id });
+        return send(
+          res,
+          200,
+          { sessions:sessions.map((session) => ({ ...session, isCurrent:session.id === auth.sessionId })) },
+          { ...cors, "x-request-id":id }
+        );
       }
 
       const sessionPrefix = "/v1/auth/sessions/";
