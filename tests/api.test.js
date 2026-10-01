@@ -102,3 +102,28 @@ test("treats a successful HTTP response without the synced session as malformed"
     globalThis.__GYM_CONFIG__ = originalConfig;
   }
 });
+test("stores the authenticated cloud user identity after login", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalStorageDescriptor = installStorage(new Map());
+  const originalConfig = globalThis.__GYM_CONFIG__;
+  globalThis.__GYM_CONFIG__ = { apiBaseUrl:"https://api.example.test" };
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    user:{ id:"123e4567-e89b-12d3-a456-426614174000", email:"athlete@example.com" },
+    accessToken:"header.payload.signature"
+  }), {
+    status:200,
+    headers:{ "content-type":"application/json" }
+  });
+
+  try {
+    const module = await import("../src/api.js?login-test=" + Date.now());
+    const result = await module.login("athlete@example.com", "correct horse battery staple");
+    assert.equal(result.ok, true);
+    assert.equal(module.getCurrentUserId(), "123e4567-e89b-12d3-a456-426614174000");
+    assert.equal(module.hasAuth(), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreStorage(originalStorageDescriptor);
+    globalThis.__GYM_CONFIG__ = originalConfig;
+  }
+});
