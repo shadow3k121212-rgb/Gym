@@ -11,7 +11,7 @@ export class ValidationError extends Error {
 export function normalizeEmail(value) {
   if (typeof value !== "string") throw new ValidationError("Email is required.");
   const email = value.trim().toLowerCase();
-  if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email) || email.length > 254) {
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
     throw new ValidationError("Enter a valid email address.");
   }
   return email;
