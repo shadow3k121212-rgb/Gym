@@ -39,6 +39,7 @@ Every change should be:
 - Current phase: **Phase 3 — Identity, sessions, authorization, account lifecycle**
 - Status: IN PROGRESS
 - Last completed phase: **Phase 2 — Data model + sync correctness**
+- Phase 3 hardening checkpoint: refresh-token rotation now preserves the original session expiry (no indefinite sliding lifetime); rotated cookies advertise only the remaining server lifetime; current-device revocation clears the refresh cookie and client auth state; production reset delivery is HTTPS-only.
 
 ## Phase 1 definition of done
 - No silent state loss on normal user interactions

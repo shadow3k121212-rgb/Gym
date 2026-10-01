@@ -201,14 +201,14 @@ export class PostgresRepository {
       await client.query(
         `insert into auth_sessions (id,family_id,user_id,token_hash,expires_at)
          values ($1,$2,$3,$4,$5)`,
-        [replacement.id,row.family_id,row.user_id,replacement.tokenHash,replacement.expiresAt]
+        [replacement.id,row.family_id,row.user_id,replacement.tokenHash,row.expires_at]
       );
       await client.query(
         "update auth_sessions set revoked_at=now(),last_seen_at=now(),replaced_by_session_id=$1,revocation_reason='rotated' where id=$2",
         [replacement.id,row.id]
       );
       await client.query("commit");
-      return { status:"rotated", userId:row.user_id, familyId:row.family_id, sessionId:replacement.id };
+      return { status:"rotated", userId:row.user_id, familyId:row.family_id, sessionId:replacement.id, expiresAt:row.expires_at };
     } catch (error) {
       await client.query("rollback");
       throw error;

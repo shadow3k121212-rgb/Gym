@@ -151,11 +151,13 @@ export function listAuthSessions() {
   return request("/v1/auth/sessions");
 }
 
-export function revokeAuthSession(sessionId) {
+export async function revokeAuthSession(sessionId) {
   if (!apiBaseUrl || !hasAuth() || typeof sessionId !== "string" || !sessionId) {
-    return Promise.resolve({ ok:false, message:"Cloud API is not configured." });
+    return { ok:false, message:"Cloud API is not configured." };
   }
-  return request("/v1/auth/sessions/" + encodeURIComponent(sessionId), { method:"DELETE" });
+  const result = await request("/v1/auth/sessions/" + encodeURIComponent(sessionId), { method:"DELETE" });
+  if (result.ok && result.body?.current === true) clearAuth();
+  return result;
 }
 
 export async function deleteAccount(password) {

@@ -264,8 +264,7 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
         const replacementToken = createRefreshToken();
         const rotated = await repo.rotateAuthSession(hashRefreshToken(rawRefreshToken), {
           id:replacementId,
-          tokenHash:hashRefreshToken(replacementToken),
-          expiresAt:refreshExpiry()
+          tokenHash:hashRefreshToken(replacementToken)
         });
         if (rotated.status !== "rotated") {
           return send(res, 401, { error:{ message:"Refresh session is invalid.", requestId:id } }, { ...cors, "x-request-id":id, "set-cookie":clearRefreshCookie() });
@@ -276,7 +275,8 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
           return send(res, 401, { error:{ message:"Account is not active.", requestId:id } }, { ...cors, "x-request-id":id, "set-cookie":clearRefreshCookie() });
         }
         const accessToken = issueAccessToken(user.id,jwtSecret,Date.now(),rotated.sessionId);
-        return send(res, 200, { user:{ id:user.id, email:user.email }, accessToken }, { ...cors, "x-request-id":id, "set-cookie":refreshCookie(replacementToken) });
+        const remainingRefreshSeconds = Math.max(0, Math.ceil((new Date(rotated.expiresAt).getTime() - Date.now()) / 1000));
+        return send(res, 200, { user:{ id:user.id, email:user.email }, accessToken }, { ...cors, "x-request-id":id, "set-cookie":refreshCookie(replacementToken, remainingRefreshSeconds) });
       }
 
       if (path === "/v1/auth/logout" && req.method === "POST") {
@@ -334,7 +334,12 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
         if (!sessionId || !/^[0-9a-f-]{36}$/i.test(sessionId)) return okError(res, 400, "Invalid session id.", id);
         const revoked = await repo.revokeAuthSession(user.id, sessionId);
         if (!revoked) return okError(res, 404, "Session not found.", id);
-        return send(res, 200, { revoked:true }, { ...cors, "x-request-id":id });
+        const current = sessionId === auth.sessionId;
+        return send(res, 200, { revoked:true, current }, {
+          ...cors,
+          "x-request-id":id,
+          ...(current ? { "set-cookie":clearRefreshCookie() } : {})
+        });
       }
 
       if (path === "/v1/sessions" && req.method === "POST") {

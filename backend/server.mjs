@@ -27,6 +27,14 @@ if (process.env.NODE_ENV === "production" && !process.env.PASSWORD_RESET_WEBHOOK
   console.error("PASSWORD_RESET_WEBHOOK_SECRET is required in production.");
   process.exit(1);
 }
+if (process.env.NODE_ENV === "production") {
+  try {
+    if (new URL(process.env.PASSWORD_RESET_WEBHOOK_URL).protocol !== "https:") throw new Error("HTTPS required");
+  } catch {
+    console.error("PASSWORD_RESET_WEBHOOK_URL must use HTTPS in production.");
+    process.exit(1);
+  }
+}
 
 const repo = new PostgresRepository();
 const handler = createApi({ repo, jwtSecret, corsOrigin });

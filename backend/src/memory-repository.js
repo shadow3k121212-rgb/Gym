@@ -177,13 +177,13 @@ export class MemoryRepository {
       familyId:current.family_id,
       userId:current.user_id,
       tokenHash:replacement.tokenHash,
-      expiresAt:replacement.expiresAt
+      expiresAt:current.expires_at
     });
     current.revoked_at = new Date().toISOString();
     current.last_seen_at = new Date().toISOString();
     current.replaced_by_session_id = next.id;
     current.revocation_reason = "rotated";
-    return { status:"rotated", userId:current.user_id, familyId:current.family_id, sessionId:next.id };
+    return { status:"rotated", userId:current.user_id, familyId:current.family_id, sessionId:next.id, expiresAt:current.expires_at };
   }
 
   async revokeAuthSessionByTokenHash(tokenHash, reason = "logout") {

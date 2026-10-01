@@ -415,6 +415,12 @@ test("issues a refresh cookie and rotates it without exposing raw refresh tokens
   assert.equal(rotated.status,200);
   assert.notEqual(refreshCookieValue(rotated), oldRefresh);
   assert.equal(typeof rotated.body.accessToken, "string");
+  const firstSession = [...testServer.repo.authSessions.values()].find((session) => session.token_hash === hashRefreshToken(oldRefresh));
+  const rotatedSessionId = JSON.parse(Buffer.from(rotated.body.accessToken.split(".")[1], "base64url").toString("utf8")).sid;
+  const rotatedSession = testServer.repo.authSessions.get(rotatedSessionId);
+  assert.ok(firstSession);
+  assert.ok(rotatedSession);
+  assert.equal(rotatedSession.expires_at, firstSession.expires_at);
 
   const reused = await request(testServer.base, "/v1/auth/refresh", {
     method:"POST",
@@ -638,6 +644,30 @@ test("logout revokes the access session even when the refresh cookie is unavaila
     headers:{authorization:`Bearer ${registered.body.accessToken}`}
   });
   assert.equal(logout.status,204);
+
+  const me = await request(testServer.base, "/v1/me", {
+    headers:{authorization:`Bearer ${registered.body.accessToken}`}
+  });
+  assert.equal(me.status,401);
+});
+
+test("revoking the current device session clears the refresh cookie and invalidates the access token", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"revoke-current@example.com",password:"correct horse battery staple"})
+  });
+  const currentSessionId = JSON.parse(Buffer.from(registered.body.accessToken.split(".")[1], "base64url").toString("utf8")).sid;
+
+  const revoked = await request(testServer.base, "/v1/auth/sessions/" + currentSessionId, {
+    method:"DELETE",
+    headers:{authorization:`Bearer ${registered.body.accessToken}`}
+  });
+  assert.equal(revoked.status,200);
+  assert.equal(revoked.body.current,true);
+  assert.match(cookieFrom(revoked), /Max-Age=0/);
 
   const me = await request(testServer.base, "/v1/me", {
     headers:{authorization:`Bearer ${registered.body.accessToken}`}
