@@ -146,6 +146,13 @@ export class MemoryRepository {
     return session;
   }
 
+  async touchAuthSession(sessionId, userId) {
+    const session = this.authSessions.get(sessionId);
+    if (session && session.user_id === userId && !session.revoked_at) {
+      session.last_seen_at = new Date().toISOString();
+    }
+  }
+
   async rotateAuthSession(tokenHash, replacement) {
     const id = this.authSessionsByToken.get(tokenHash);
     if (!id) return { status:"invalid" };
