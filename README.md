@@ -25,7 +25,7 @@ npm run check
 npm run build
 ```
 
-No runtime dependencies are required.
+The frontend has no runtime dependencies; the optional backend uses PostgreSQL via the `pg` package.
 
 ## Product principles
 
