@@ -490,7 +490,7 @@ test("disabled accounts cannot use existing access or refresh sessions", async (
   const refresh = refreshCookieValue(registered);
   const userId = JSON.parse(Buffer.from(registered.body.accessToken.split(".")[1], "base64url").toString("utf8")).sub;
   const user = testServer.repo.users.get(userId);
-  user.status = "disabled";
+  user.status = "suspended";
 
   const me = await request(testServer.base, "/v1/me", {
     headers:{authorization:`Bearer ${registered.body.accessToken}`}
@@ -623,4 +623,47 @@ test("account deletion requires password confirmation and removes the account", 
     body:JSON.stringify({email:"delete@example.com",password:"correct horse battery staple"})
   });
   assert.equal(login.status,401);
+});
+test("logout revokes the access session even when the refresh cookie is unavailable", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"logout-no-cookie@example.com",password:"correct horse battery staple"})
+  });
+
+  const logout = await request(testServer.base, "/v1/auth/logout", {
+    method:"POST",
+    headers:{authorization:`Bearer ${registered.body.accessToken}`}
+  });
+  assert.equal(logout.status,204);
+
+  const me = await request(testServer.base, "/v1/me", {
+    headers:{authorization:`Bearer ${registered.body.accessToken}`}
+  });
+  assert.equal(me.status,401);
+});
+
+test("session management marks the current session and exposes revocation state", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+
+  const first = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"session-state@example.com",password:"correct horse battery staple"})
+  });
+  const second = await request(testServer.base, "/v1/auth/login", {
+    method:"POST",
+    body:JSON.stringify({email:"session-state@example.com",password:"correct horse battery staple"})
+  });
+
+  const list = await request(testServer.base, "/v1/auth/sessions", {
+    headers:{authorization:`Bearer ${first.body.accessToken}`}
+  });
+  assert.equal(list.status,200);
+  assert.equal(list.body.sessions.length,2);
+  assert.equal(list.body.sessions.filter((session) => session.isCurrent).length,1);
+  assert.equal(list.body.sessions.filter((session) => !session.revoked_at).length,2);
+  assert.notEqual(second.body.accessToken, first.body.accessToken);
 });
