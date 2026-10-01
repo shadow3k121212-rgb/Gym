@@ -201,7 +201,7 @@ test("makes movement-event writes idempotent and rejects payload conflicts", asy
   assert.equal(changed.status,409);
 });
 
-test("blocks movement events for another user’s session", async (t) =>
+test("blocks movement events for another user’s session", async (t) => {
   const testServer = await makeServer();
   t.after(() => testServer.server.close());
   const a=await request(testServer.base,"/v1/auth/register",{method:"POST",body:JSON.stringify({email:"a@example.com",password:"correct horse battery staple"})});
