@@ -99,6 +99,7 @@ test("persists a session and returns the same result for the same idempotency ke
   const session={
     id:"123e4567-e89b-12d3-a456-426614174000",
     startedAt:"2026-10-01T12:00:00.000Z",
+    completedAt:"2026-10-01T12:05:00.000Z",
     source:"manual",
     name:"Upper Strength",
     exercises:[{exerciseId:"bench",sets:[{index:1,reps:8,weightKg:70,completed:true,completedAt:"2026-10-01T12:05:00.000Z",rpe:8}]}]
