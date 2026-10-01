@@ -94,10 +94,17 @@ paths:
         content:
           application/json:
             schema: { $ref: "#/components/schemas/MovementEvent" }
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 16, maxLength: 128 }
       responses:
         "201": { description: Event accepted }
+        "200": { description: Idempotent replay of the same event }
         "404": { description: User does not own the session }
         "400": { description: Invalid request or referenced exercise }
+        "409": { description: Idempotency key conflict }
 
 components:
   securitySchemes:
