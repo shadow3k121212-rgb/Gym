@@ -166,6 +166,7 @@ Status: IN PROGRESS.
 
 Completed slices:
 - durable sync retry metadata with attempts, next-at timestamps, last-error retention, and blocked-state retention for permanent failures
+- account/settings recovery UI exposes authenticated pending work, manual retry for blocked work, and separate local-only handling for unowned legacy queue records
 - bounded exponential backoff (5 seconds to 15 minutes) for transient sync failures
 - authentication failures remain immediately retryable after re-authentication
 - retry-reset primitive plus account/settings UI manual retry path for blocked retained workouts
@@ -179,9 +180,10 @@ Verification evidence:
 - CI run #389 passed on observability/timeout head `cbd1e7ab2a4c766908696f3b0849e3b1b8f60fff`.
 - CI run #392 passed on continuity checkpoint head `25f68698ed7f40eb948e556a347d0bbe86827186`.
 - CI run #399 passed on combined retry-storage-recovery head `f209ddafacb94ac7ebbf75297c46862fe2a540b1`.
+- CI run #403 passed on latest Phase 4 recovery UI head `5d8f7aabfd7833550f87f3488bf9ae8f40361b39`.
 - These CI runs passed unit/API tests, PostgreSQL migrations + schema verification, HTTP smoke, dependency audit, static checks, production build, and output verification.
 
 Next Phase 4 implementation slice:
 - add targeted client tests for scheduled retry/online/auth-event interaction and verify no duplicate flush side effects
-- expose unowned legacy sync records separately from authenticated pending work so they remain visible without ever being auto-assigned
-- extend observability with bounded sync outcome counters suitable for centralized production metrics, without collecting workout payloads.
+- extend observability with bounded sync outcome counters suitable for centralized production metrics, without collecting workout payloads
+- define operational retention/cleanup and recovery reporting for long-lived pending sync records.
