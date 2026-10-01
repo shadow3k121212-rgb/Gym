@@ -23,6 +23,7 @@ function send(res, statusCode, body, headers = {}) {
     "cache-control": "no-store",
     "x-content-type-options": "nosniff",
     "referrer-policy": "no-referrer",
+    "x-frame-options": "DENY",
     ...headers
   });
   res.end(JSON.stringify(body));
@@ -69,7 +70,8 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
     const id = requestId(req);
     const origin = req.headers.origin;
     const cors = {
-      "access-control-allow-origin": corsOrigin === "*" ? "*" : origin === corsOrigin ? corsOrigin : "null",
+      "access-control-allow-origin": corsOrigin === "*" ? "*" : origin === corsOrigin ? corsOrigin : "",
+      "vary": "Origin",
       "access-control-allow-headers": "Authorization, Content-Type, Idempotency-Key, X-Request-Id",
       "access-control-allow-methods": "GET,POST,OPTIONS"
     };

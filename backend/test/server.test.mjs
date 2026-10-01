@@ -47,6 +47,20 @@ test("exposes liveness and readiness separately", async (t) => {
   assert.equal(ready.body.ready, true);
 });
 
+test("rejects malformed date-time input with a client error", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST", body:JSON.stringify({email:"dates@example.com",password:"correct horse battery staple"})
+  });
+  const response = await request(testServer.base, "/v1/sessions", {
+    method:"POST",
+    headers:{authorization:`Bearer ${registered.body.accessToken}`,"idempotency-key":"dates-invalid-123456"},
+    body:JSON.stringify({id:"123e4567-e89b-12d3-a456-426614174100",startedAt:"not-a-date",source:"manual",name:"Broken",exercises:[]})
+  });
+  assert.equal(response.status, 400);
+});
+
 test("rejects weak passwords", async (t) => {
   const testServer = await makeServer();
   t.after(() => testServer.server.close());

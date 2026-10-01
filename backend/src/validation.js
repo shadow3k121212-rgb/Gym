@@ -24,6 +24,13 @@ export function validatePassword(value) {
   return value;
 }
 
+function isoDate(value, label) {
+  if (typeof value !== "string") throw new ValidationError(`${label} must be an ISO date-time.`);
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) throw new ValidationError(`${label} must be an ISO date-time.`);
+  return new Date(timestamp).toISOString();
+}
+
 function numberInRange(value, min, max, label) {
   const next = Number(value);
   if (!Number.isFinite(next) || next < min || next > max) {
@@ -37,9 +44,7 @@ export function validateSession(input) {
   if (typeof input.id !== "string" || input.id.length < 8 || input.id.length > 80) {
     throw new ValidationError("Session id is invalid.");
   }
-  if (typeof input.startedAt !== "string" || Number.isNaN(Date.parse(input.startedAt))) {
-    throw new ValidationError("startedAt must be an ISO date-time.");
-  }
+  const startedAt = isoDate(input.startedAt, "startedAt");
   if (!SOURCES.has(input.source)) throw new ValidationError("Unsupported session source.");
   if (input.name !== undefined && (typeof input.name !== "string" || input.name.length > 120)) {
     throw new ValidationError("Session name is invalid.");
@@ -66,7 +71,7 @@ export function validateSession(input) {
           reps: numberInRange(set.reps, 0, 1000, "Reps"),
           weightKg: numberInRange(set.weightKg, 0, 1000, "Load"),
           completed: Boolean(set.completed),
-          completedAt: set.completedAt ? new Date(set.completedAt).toISOString() : null,
+          completedAt: set.completedAt ? isoDate(set.completedAt, "completedAt") : null,
           rpe: set.rpe === null || set.rpe === undefined || set.rpe === "" ? null : numberInRange(set.rpe, 1, 10, "RPE")
         };
       })
@@ -75,7 +80,7 @@ export function validateSession(input) {
 
   return {
     id: input.id,
-    startedAt: new Date(input.startedAt).toISOString(),
+    startedAt,
     source: input.source,
     name: typeof input.name === "string" ? input.name.slice(0, 120) : "Workout",
     exercises
@@ -94,9 +99,7 @@ export function validateMovementEvent(input) {
     throw new ValidationError("schemaVersion is invalid.");
   }
   if (!SOURCES.has(input.source)) throw new ValidationError("Unsupported movement source.");
-  if (typeof input.timestamp !== "string" || Number.isNaN(Date.parse(input.timestamp))) {
-    throw new ValidationError("timestamp must be an ISO date-time.");
-  }
+  const timestamp = isoDate(input.timestamp, "timestamp");
   numberInRange(input.reps, 0, 1000, "Reps");
   if (input.confidence !== null && input.confidence !== undefined) numberInRange(input.confidence, 0, 1, "Confidence");
   if (input.model !== null && input.model !== undefined && typeof input.model !== "string") {
@@ -110,7 +113,7 @@ export function validateMovementEvent(input) {
     exerciseId: input.exerciseId,
     schemaVersion: input.schemaVersion,
     source: input.source,
-    timestamp: new Date(input.timestamp).toISOString(),
+    timestamp,
     reps: Number(input.reps),
     confidence: input.confidence === undefined ? null : input.confidence,
     model: input.model === undefined ? null : input.model,
