@@ -125,8 +125,47 @@ export async function logout() {
 
 export async function logoutAll() {
   const result = await request("/v1/auth/logout-all", { method:"POST" }, false);
-  if (result.ok) clearAuth();
+  clearAuth();
   return result;
+}
+
+export function listAuthSessions() {
+  if (!apiBaseUrl || !hasAuth()) return Promise.resolve({ ok:false, message:"Cloud API is not configured." });
+  return request("/v1/auth/sessions");
+}
+
+export function revokeAuthSession(sessionId) {
+  if (!apiBaseUrl || !hasAuth() || typeof sessionId !== "string" || !sessionId) {
+    return Promise.resolve({ ok:false, message:"Cloud API is not configured." });
+  }
+  return request("/v1/auth/sessions/" + encodeURIComponent(sessionId), { method:"DELETE" });
+}
+
+export function deleteAccount(password) {
+  if (!apiBaseUrl || !hasAuth()) return Promise.resolve({ ok:false, message:"Cloud account is not connected." });
+  return request("/v1/auth/delete-account", {
+    method:"POST",
+    body:JSON.stringify({ password })
+  }, false).then((result) => {
+    if (result.ok) clearAuth();
+    return result;
+  });
+}
+
+export function requestPasswordReset(email) {
+  if (!apiBaseUrl) return Promise.resolve({ ok:false, message:"Cloud API is not configured." });
+  return rawRequest("/v1/auth/password-reset/request", {
+    method:"POST",
+    body:JSON.stringify({ email })
+  }, false);
+}
+
+export function confirmPasswordReset(token, password) {
+  if (!apiBaseUrl) return Promise.resolve({ ok:false, message:"Cloud API is not configured." });
+  return rawRequest("/v1/auth/password-reset/confirm", {
+    method:"POST",
+    body:JSON.stringify({ token, password })
+  }, false);
 }
 
 export async function syncSession(session) {
