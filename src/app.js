@@ -312,7 +312,7 @@ function renderShell(content) {
         <div class="sidebar-card">
           <span class="eyebrow">PRODUCT MODE</span>
           <strong>Training memory</strong>
-          <p>Your session data stays in this browser in beta. Cloud sync is a planned backend layer, not a hidden promise.</p>
+          <p>Your session data stays in this browser in beta. Optional cloud sync uses the authenticated API when configured.</p>
           <span class="status-dot">LOCAL-FIRST BETA</span>
         </div>
         <div class="sidebar-foot">GYM · BETA 0.2</div>
