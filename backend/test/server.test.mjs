@@ -18,7 +18,12 @@ async function request(base, path, options={}) {
     ...options,
     headers: { "content-type":"application/json", ...(options.headers || {}) }
   });
-  return { status:response.status, body:await response.json(), headers:response.headers };
+  const text = await response.text();
+  let body = {};
+  if (text) {
+    try { body = JSON.parse(text); } catch { body = { raw:text }; }
+  }
+  return { status:response.status, body, headers:response.headers };
 }
 
 test("registers, authenticates, and reads the current user", async (t) => {
