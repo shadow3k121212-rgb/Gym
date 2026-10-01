@@ -218,8 +218,10 @@ test("makes movement-event writes idempotent and rejects payload conflicts", asy
     body:JSON.stringify({...event,reps:9})
   });
   assert.equal(first.status,201);
+  assert.equal(first.body.event.reps,8);
   assert.equal(second.status,200);
   assert.equal(second.body.event.id,first.body.event.id);
+  assert.equal(second.body.event.reps,8);
   assert.equal(changed.status,409);
 });
 
