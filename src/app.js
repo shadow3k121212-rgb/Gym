@@ -54,17 +54,36 @@ function commitState(mutator) {
 
 async function refreshCloudHistory() {
   if (!hasApi() || !hasAuth()) return;
-  const result = await listCloudSessions(50);
-  if (!result.ok) {
-    if (result.authRequired) {
-      clearAuth();
-      announce("Cloud session expired. Sign in again to sync your pending workouts.");
+  const allSessions = [];
+  const seenCursors = new Set();
+  let cursor = null;
+
+  while (true) {
+    const result = await listCloudSessions(100, cursor);
+    if (!result.ok) {
+      if (result.authRequired) {
+        clearAuth();
+        announce("Cloud session expired. Sign in again to sync your pending workouts.");
+      }
+      return;
     }
-    return;
+    if (!Array.isArray(result.body?.sessions)) return;
+    allSessions.push(...result.body.sessions);
+
+    const nextCursor = typeof result.body.nextCursor === "string" && result.body.nextCursor
+      ? result.body.nextCursor
+      : null;
+    if (!nextCursor) break;
+    if (seenCursors.has(nextCursor)) {
+      announce("Cloud history sync stopped because the server returned a repeated page cursor.");
+      return;
+    }
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
   }
-  if (!Array.isArray(result.body?.sessions)) return;
+
   const previousHistory = state.history;
-  const merged = mergeHistory(state.history, result.body.sessions);
+  const merged = mergeHistory(state.history, allSessions);
   if (JSON.stringify(merged) !== JSON.stringify(state.history)) {
     state.history = merged;
     state.sampleData = false;
