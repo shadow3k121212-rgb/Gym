@@ -5,7 +5,7 @@ import { mergeHistory, remoteSessionToHistory } from "../src/history-sync.js";
 test("maps remote sessions into the local history contract", () => {
   assert.deepEqual(
     remoteSessionToHistory({
-      id: "1",
+      id: "123e4567-e89b-12d3-a456-426614174001",
       started_at: "2026-10-01T12:00:00Z",
       completed_at: "2026-10-01T12:45:00Z",
       name: "Upper Strength",
@@ -13,19 +13,19 @@ test("maps remote sessions into the local history contract", () => {
       volume: "560",
       completed_sets: "8"
     }),
-    { id:"1", date:"2026-10-01", name:"Upper Strength", volumeKg:560, sets:8, source:"manual" }
+    { id:"123e4567-e89b-12d3-a456-426614174001", date:"2026-10-01", name:"Upper Strength", volumeKg:560, sets:8, source:"manual" }
   );
 });
 
 test("merges remote truth by session id without duplicating local history", () => {
   const merged = mergeHistory(
     [
-      { id:"1", date:"2026-10-01", name:"Local", volumeKg:500, sets:7, source:"manual" },
-      { id:"2", date:"2026-09-30", name:"Local-only", volumeKg:300, sets:4, source:"manual" }
+      { id:"123e4567-e89b-12d3-a456-426614174001", date:"2026-10-01", name:"Local", volumeKg:500, sets:7, source:"manual" },
+      { id:"123e4567-e89b-12d3-a456-426614174002", date:"2026-09-30", name:"Local-only", volumeKg:300, sets:4, source:"manual" }
     ],
     [
-      { id:"1", started_at:"2026-10-01T12:00:00Z", completed_at:"2026-10-01T12:45:00Z", name:"Cloud", source:"manual", volume:"560", completed_sets:"8" },
-      { id:"3", started_at:"2026-10-02T12:00:00Z", completed_at:null, name:"Cloud-only", source:"manual", volume:"200", completed_sets:"3" }
+      { id:"123e4567-e89b-12d3-a456-426614174001", started_at:"2026-10-01T12:00:00Z", completed_at:"2026-10-01T12:45:00Z", name:"Cloud", source:"manual", volume:"560", completed_sets:"8" },
+      { id:"123e4567-e89b-12d3-a456-426614174003", started_at:"2026-10-02T12:00:00Z", completed_at:null, name:"Cloud-only", source:"manual", volume:"200", completed_sets:"3" }
     ]
   );
   assert.deepEqual(merged.map((item) => item.id), ["2","1","3"]);
@@ -34,7 +34,7 @@ test("merges remote truth by session id without duplicating local history", () =
 });
 test("rejects malformed remote sessions without replacing valid local history", () => {
   assert.equal(remoteSessionToHistory({
-    id:"bad-date",
+    id:"123e4567-e89b-12d3-a456-426614174005",
     started_at:"not-a-date",
     completed_at:null,
     name:"Broken",
@@ -43,7 +43,7 @@ test("rejects malformed remote sessions without replacing valid local history", 
     completed_sets:"2"
   }), null);
   assert.equal(remoteSessionToHistory({
-    id:"bad-source",
+    id:"123e4567-e89b-12d3-a456-426614174006",
     started_at:"2026-10-01T12:00:00Z",
     completed_at:null,
     name:"Broken",
@@ -52,7 +52,7 @@ test("rejects malformed remote sessions without replacing valid local history", 
     completed_sets:"2"
   }), null);
   assert.equal(remoteSessionToHistory({
-    id:"bad-volume",
+    id:"123e4567-e89b-12d3-a456-426614174007",
     started_at:"2026-10-01T12:00:00Z",
     completed_at:null,
     name:"Broken",
@@ -61,9 +61,9 @@ test("rejects malformed remote sessions without replacing valid local history", 
     completed_sets:"2"
   }), null);
 
-  const local = [{ id:"same", date:"2026-10-01", name:"Trusted local", volumeKg:560, sets:8, source:"manual" }];
+  const local = [{ id:"123e4567-e89b-12d3-a456-426614174004", date:"2026-10-01", name:"Trusted local", volumeKg:560, sets:8, source:"manual" }];
   const merged = mergeHistory(local, [{
-    id:"same",
+    id:"123e4567-e89b-12d3-a456-426614174004",
     started_at:"still-invalid",
     completed_at:null,
     name:"Poison",
@@ -77,7 +77,7 @@ test("rejects malformed remote sessions without replacing valid local history", 
 test("normalizes valid remote history values deterministically", () => {
   assert.deepEqual(
     remoteSessionToHistory({
-      id:"valid",
+      id:"123e4567-e89b-12d3-a456-426614174008",
       started_at:"2026-10-01T12:00:00Z",
       completed_at:"2026-10-01T12:45:00Z",
       name:"",
@@ -85,14 +85,14 @@ test("normalizes valid remote history values deterministically", () => {
       volume:"560.567",
       completed_sets:"8.9"
     }),
-    { id:"valid", date:"2026-10-01", name:"Workout", volumeKg:560.6, sets:8, source:"manual" }
+    { id:"123e4567-e89b-12d3-a456-426614174008", date:"2026-10-01", name:"Workout", volumeKg:560.6, sets:8, source:"manual" }
   );
 });
 test("tags remote history with the authenticated cloud owner", () => {
   const owner = "123e4567-e89b-12d3-a456-426614174000";
   assert.deepEqual(
     remoteSessionToHistory({
-      id:"owned",
+      id:"123e4567-e89b-12d3-a456-426614174009",
       started_at:"2026-10-01T12:00:00Z",
       completed_at:null,
       name:"Owned",
@@ -100,6 +100,6 @@ test("tags remote history with the authenticated cloud owner", () => {
       volume:"100",
       completed_sets:"2"
     }, owner),
-    { id:"owned", date:"2026-10-01", name:"Owned", volumeKg:100, sets:2, source:"manual", cloudOwnerId:owner }
+    { id:"123e4567-e89b-12d3-a456-426614174009", date:"2026-10-01", name:"Owned", volumeKg:100, sets:2, source:"manual", cloudOwnerId:owner }
   );
 });
