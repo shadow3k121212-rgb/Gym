@@ -11,6 +11,8 @@ export class MemoryRepository {
     this.idempotency = new Map();
     this.events = new Map();
     this.eventIdempotency = new Map();
+    this.authSessions = new Map();
+    this.authSessionsByToken = new Map();
   }
 
   async health() { return true; }
@@ -36,6 +38,107 @@ export class MemoryRepository {
   async getUserById(userId) {
     const user = this.users.get(userId);
     return user ? { id:user.id,email:user.email,status:user.status,created_at:user.created_at } : null;
+  }
+
+  async createAuthSession({ id, familyId, userId, tokenHash, expiresAt }) {
+    const session = {
+      id,
+      family_id:familyId,
+      user_id:userId,
+      token_hash:tokenHash,
+      created_at:new Date().toISOString(),
+      expires_at:expiresAt instanceof Date ? expiresAt.toISOString() : expiresAt,
+      last_seen_at:new Date().toISOString(),
+      revoked_at:null,
+      replaced_by_session_id:null,
+      revocation_reason:null
+    };
+    this.authSessions.set(id, session);
+    this.authSessionsByToken.set(tokenHash, id);
+    return session;
+  }
+
+  async getAuthSession(sessionId, userId) {
+    const session = this.authSessions.get(sessionId);
+    if (!session || session.user_id !== userId) return null;
+    return session;
+  }
+
+  async rotateAuthSession(tokenHash, replacement) {
+    const id = this.authSessionsByToken.get(tokenHash);
+    if (!id) return { status:"invalid" };
+    const current = this.authSessions.get(id);
+    if (!current) return { status:"invalid" };
+    if (current.revoked_at) {
+      for (const session of this.authSessions.values()) {
+        if (session.family_id === current.family_id && !session.revoked_at) {
+          session.revoked_at = new Date().toISOString();
+          session.revocation_reason = "refresh-token-reuse";
+        }
+      }
+      return { status:"reused" };
+    }
+    if (new Date(current.expires_at).getTime() <= Date.now()) {
+      current.revoked_at = new Date().toISOString();
+      current.revocation_reason = "expired";
+      return { status:"expired" };
+    }
+    const next = await this.createAuthSession({
+      id:replacement.id,
+      familyId:current.family_id,
+      userId:current.user_id,
+      tokenHash:replacement.tokenHash,
+      expiresAt:replacement.expiresAt
+    });
+    current.revoked_at = new Date().toISOString();
+    current.last_seen_at = new Date().toISOString();
+    current.replaced_by_session_id = next.id;
+    current.revocation_reason = "rotated";
+    return { status:"rotated", userId:current.user_id, familyId:current.family_id, sessionId:next.id };
+  }
+
+  async revokeAuthSessionByTokenHash(tokenHash, reason = "logout") {
+    const id = this.authSessionsByToken.get(tokenHash);
+    if (!id) return null;
+    const session = this.authSessions.get(id);
+    if (!session) return null;
+    session.revoked_at = session.revoked_at || new Date().toISOString();
+    session.revocation_reason = session.revocation_reason || reason;
+    return { id:session.id, user_id:session.user_id };
+  }
+
+  async revokeAuthSession(userId, sessionId, reason = "user-revoked") {
+    const session = this.authSessions.get(sessionId);
+    if (!session || session.user_id !== userId) return null;
+    session.revoked_at = session.revoked_at || new Date().toISOString();
+    session.revocation_reason = session.revocation_reason || reason;
+    return { id:session.id, user_id:session.user_id };
+  }
+
+  async revokeAllAuthSessions(userId, exceptSessionId = null, reason = "logout-all") {
+    let count = 0;
+    for (const session of this.authSessions.values()) {
+      if (session.user_id === userId && !session.revoked_at && session.id !== exceptSessionId) {
+        session.revoked_at = new Date().toISOString();
+        session.revocation_reason = reason;
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  async listAuthSessions(userId) {
+    return [...this.authSessions.values()]
+      .filter((session) => session.user_id === userId)
+      .sort((a,b) => b.created_at.localeCompare(a.created_at))
+      .map((session) => ({
+        id:session.id,
+        created_at:session.created_at,
+        expires_at:session.expires_at,
+        last_seen_at:session.last_seen_at,
+        revoked_at:session.revoked_at,
+        revocation_reason:session.revocation_reason
+      }));
   }
 
   async createSession(userId, input, idempotencyKey) {
