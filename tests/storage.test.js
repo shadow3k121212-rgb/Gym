@@ -15,14 +15,22 @@ test("repairs malformed v2 state instead of trusting corrupted storage", () => {
   const storage = makeStorage({"gym:state:v2": JSON.stringify({
     schemaVersion: 2,
     activeView: "not-a-view",
-    session: { id: "bad", exercises: "not-an-array" },
+    session: {
+      id: "recovery-1",
+      startedAt: "2026-10-01T10:00:00.000Z",
+      completedAt: "2026-10-01T09:00:00.000Z",
+      exercises: [{ exerciseId: "bench", sets: [{ reps: 8, weightKg: 70, completed: true }] }]
+    },
     history: [{ id: "h1", volumeKg: "not-number" }, null],
     syncQueue: [{ id: "q1", exercises: [] }, null],
     settings: { units: "stones", displayName: "<script>" }
   })});
   const state = loadState(storage);
   assert.equal(state.activeView, "dashboard");
-  assert.equal(state.session, null);
+  assert.ok(state.session);
+  assert.equal(state.session.completedAt, null);
+  assert.equal(state.session.exercises[0].sets[0].completed, false);
+  assert.equal(state.session.exercises[0].sets[0].completedAt, null);
   assert.equal(state.history.length, 1);
   assert.equal(state.history[0].volumeKg, 0);
   assert.deepEqual(state.syncQueue, []);
