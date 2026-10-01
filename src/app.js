@@ -1,5 +1,6 @@
 import { EXERCISES, SAMPLE_HISTORY, WORKOUT, createEmptySession, getExercise } from "./data.js";
 import { hasApi, hasAuth, syncSession } from "./api.js";
+import { renderAccount, wireAccount } from "./account.js";
 import { clearState, defaultState, exportState, loadState, persistState } from "./storage.js";
 import {
   estimateOneRepMax,
@@ -171,6 +172,7 @@ function startRestTimer() {
     if (restRemaining <= 0) stopRestTimer();
     updateRestUI();
   }, 1000);
+  wireAccount({ render, announce });
   updateRestUI();
 }
 
@@ -490,34 +492,7 @@ function libraryView() {
   `);
 }
 
-function settingsView() {
-  return renderShell(`
-    <section class="settings-grid">
-      <div class="panel">
-        <div class="eyebrow">ATHLETE PROFILE</div>
-        <h3>Preferences that follow the product.</h3>
-        <label class="field-label" for="display-name">Display name</label>
-        <input class="text-input" id="display-name" maxlength="50" value="${escapeHtml(state.settings.displayName)}">
-        <label class="field-label" for="units">Weight units</label>
-        <select class="text-input" id="units">
-          <option value="kg" ${state.settings.units === "kg" ? "selected" : ""}>Kilograms (kg)</option>
-          <option value="lb" ${state.settings.units === "lb" ? "selected" : ""}>Pounds (lb)</option>
-        </select>
-        <button class="primary-button" data-action="save-settings">Save preferences</button>
-      </div>
-      <div class="panel danger-panel">
-        <div class="eyebrow">DATA CONTROL</div>
-        <h3>You own the local record.</h3>
-        <p>Beta data is stored only in this browser. Export it before clearing this device.</p>
-        <button class="secondary-button full" data-action="export">Export my data ${icon("download")}</button>
-        <button class="danger-button full" data-action="clear-data">Delete local data ${icon("trash")}</button>
-        <div class="micro-note">Cloud sync, account recovery and server-side deletion will be implemented with the backend service before treating the account system as production.</div>
-      </div>
-    </section>
-  `);
-}
-
-function render() {
+function settingsView() {\n  return renderShell(renderAccount(state));\n}\n\nfunction render() {
   const view = state.activeView === "workout" ? workoutView()
     : state.activeView === "progress" ? progressView()
     : state.activeView === "library" ? libraryView()

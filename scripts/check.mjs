@@ -2,7 +2,7 @@ import { readFile, access } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 
 const required = [
-  "index.html","src/app.js","src/styles.css","src/workout-engine.js","src/data.js","src/storage.js","src/api.js","src/sw.js",
+  "index.html","src/app.js","src/styles.css","src/workout-engine.js","src/data.js","src/storage.js","src/api.js","src/account.js","src/sw.js",
   "package.json","README.md","ARCHITECTURE.md","PRODUCT.md","BETA-RELEASE.md","SECURITY.md",
   "backend/README.md","public/runtime-config.js","backend/openapi.yaml","backend/server.mjs","backend/src/server.js","backend/src/auth.js",
   "backend/src/validation.js","backend/src/repository.js","backend/src/memory-repository.js",

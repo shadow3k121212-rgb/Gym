@@ -7,18 +7,32 @@ export function hasAuth() { return Boolean(sessionStorage.getItem(TOKEN_KEY)); }
 export function setAuthToken(token) { if (token) sessionStorage.setItem(TOKEN_KEY, token); }
 export function clearAuth() { sessionStorage.removeItem(TOKEN_KEY); }
 
-export async function syncSession(session) {
-  if (!apiBaseUrl || !hasAuth()) return { ok:false, message:"Cloud sync is not configured." };
-  const headers = {
-    "content-type":"application/json",
-    "authorization":"Bearer " + sessionStorage.getItem(TOKEN_KEY),
-    "idempotency-key":"gym-" + session.id
-  };
+async function request(path, options = {}) {
+  if (!apiBaseUrl) return { ok:false, message:"Cloud API is not configured." };
+  const headers = { "content-type":"application/json", ...(options.headers || {}) };
+  const token = sessionStorage.getItem(TOKEN_KEY);
+  if (token) headers.authorization = "Bearer " + token;
   try {
-    const response = await fetch(apiBaseUrl + "/v1/sessions", { method:"POST", headers, body:JSON.stringify(session) });
+    const response = await fetch(apiBaseUrl + path, { ...options, headers });
     const body = await response.json().catch(() => ({}));
-    return response.ok ? { ok:true, body } : { ok:false, message:body?.error?.message || "Cloud sync failed." };
+    return response.ok ? { ok:true, status:response.status, body } : { ok:false, status:response.status, message:body?.error?.message || "Request failed." };
   } catch {
     return { ok:false, message:"GYM API is unreachable." };
   }
+}
+
+async function authenticate(path, email, password) {
+  const result = await request(path, { method:"POST", body:JSON.stringify({ email, password }) });
+  if (!result.ok) return result;
+  if (!result.body?.accessToken) return { ok:false, message:"API did not return an access token." };
+  setAuthToken(result.body.accessToken);
+  return result;
+}
+
+export function login(email, password) { return authenticate("/v1/auth/login", email, password); }
+export function register(email, password) { return authenticate("/v1/auth/register", email, password); }
+
+export function syncSession(session) {
+  if (!apiBaseUrl || !hasAuth()) return Promise.resolve({ ok:false, message:"Cloud sync is not configured." });
+  return request("/v1/sessions", { method:"POST", headers:{ "idempotency-key":"gym-" + session.id }, body:JSON.stringify(session) });
 }
