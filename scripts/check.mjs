@@ -12,7 +12,7 @@ const required = [
 for (const file of required) await access(file);
 const appSource = await readFile("src/app.js", "utf8");
 if (/(^|[^$])\$\([^)]*\)\.forEach/.test(appSource)) {
-  throw new Error("Use $() for selector collections; $() returns one element.");
+  throw new Error("Use $$() for selector collections; $() returns one element.");
 }
 
 for (const file of [
