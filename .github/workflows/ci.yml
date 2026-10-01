@@ -3,8 +3,6 @@ name: CI
 permissions:
   contents: read
 
-timeout-minutes: 10
-
 on:
   push:
     branches: [main, "product/**"]
@@ -14,6 +12,7 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     services:
       postgres:
         image: postgres:16
