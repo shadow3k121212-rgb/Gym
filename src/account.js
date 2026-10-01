@@ -42,7 +42,7 @@ export function wireAccount({ render, announce }) {
     const result = await login(email, password);
     button.disabled = false;
     announce(result.ok ? "Signed in for this tab." : result.message);
-    if (result.ok) render();
+    if (result.ok) { render(); window.dispatchEvent(new Event("gym:auth-changed")); }
   }));
   document.querySelectorAll("[data-account-action=\"register\"]").forEach((button) => button.addEventListener("click", async () => {
     const email = document.querySelector("#auth-email")?.value.trim();
@@ -52,6 +52,6 @@ export function wireAccount({ render, announce }) {
     const result = await register(email, password);
     button.disabled = false;
     announce(result.ok ? "Account created and signed in." : result.message);
-    if (result.ok) render();
+    if (result.ok) { render(); window.dispatchEvent(new Event("gym:auth-changed")); }
   }));
 }
