@@ -52,3 +52,25 @@ Every change should be:
 
 ## Next phase after completion
 Phase 2 — Data model + sync correctness
+
+## Phase 1 progress log — 2026-10-01
+Implemented:
+- transactional local state commits with rollback on persistence failure
+- explicit confirmation before discarding an active workout
+- explicit confirmation before saving a partial workout
+- transient undo for the latest set-completion action
+- timer cleanup when a session/data is discarded
+- persisted-state normalization/recovery for malformed v2 localStorage
+- movement-event rep persistence and schema migration hardening
+- corrected CI workflow timeout placement
+- corrected product documentation that contradicted the implemented backend foundation
+
+Verification evidence:
+- CI run #141 passed all configured checks after the CI workflow fix.
+- CI run #147 passed all configured checks after workout recovery hardening.
+- Latest heads are still under CI verification; Phase 1 remains IN PROGRESS until the final current-head CI run is green.
+
+Next remaining Phase 1 review:
+- verify final CI on the latest head
+- inspect any new failures/regressions
+- update this checkpoint only after evidence confirms completion
