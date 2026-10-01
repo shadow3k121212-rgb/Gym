@@ -30,6 +30,9 @@ jobs:
       - name: HTTP smoke test
         run: npm run smoke
 
+      - name: Dependency audit
+        run: npm audit --prefix backend --audit-level=high
+
       - name: Static checks
         run: npm run check
 
