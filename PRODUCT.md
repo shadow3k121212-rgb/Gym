@@ -22,7 +22,7 @@ The repository initially contained only an MIT license and one initial commit. T
 ### Known gaps — do not call these complete
 
 - No production deployment, managed secrets, backups/restore drill, or operational rollback has been completed.
-- Email verification, account recovery, refresh/session management, and device/session revocation are not production-complete.
+- Email verification and managed password-reset delivery are not production-complete; rotating refresh sessions, revocation, device/session controls, and account deletion are implemented in the API foundation.
 - No real AI model, pose estimation, camera capture, or wearable integration.
 - No end-to-end browser test suite or real device/browser matrix.
 - No privacy policy, terms, consent records, billing, or support tooling.
