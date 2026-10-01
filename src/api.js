@@ -1,41 +1,51 @@
 const config = globalThis.__GYM_CONFIG__ || {};
 export const apiBaseUrl = String(config.apiBaseUrl || "").replace(/\/$/, "");
-const TOKEN_KEY = "gym:access-token";
-const USER_ID_KEY = "gym:auth-user-id";
 
-function getStoredToken() {
-  return globalThis.sessionStorage?.getItem(TOKEN_KEY) || null;
+let accessToken = null;
+let currentUserId = null;
+let refreshInFlight = null;
+
+export function hasApi() {
+  return Boolean(apiBaseUrl);
 }
 
-function getStoredUserId() {
-  return globalThis.sessionStorage?.getItem(USER_ID_KEY) || null;
-}
-
-export function hasApi() { return Boolean(apiBaseUrl); }
-export function hasAuth() { return Boolean(getStoredToken() && getStoredUserId()); }
-export function setAuthToken(token) {
-  if (token) globalThis.sessionStorage?.setItem(TOKEN_KEY, token);
-}
-export function setCurrentUserId(userId) {
-  if (typeof userId === "string" && userId) globalThis.sessionStorage?.setItem(USER_ID_KEY, userId);
+export function hasAuth() {
+  return Boolean(accessToken && currentUserId);
 }
 
 export function getCurrentUserId() {
-  return getStoredUserId();
+  return currentUserId;
+}
+
+export function setAuthSession(token, userId) {
+  if (typeof token === "string" && token && typeof userId === "string" && userId) {
+    accessToken = token;
+    currentUserId = userId;
+    return true;
+  }
+  return false;
+}
+
+export function setAuthToken(token) {
+  if (typeof token === "string" && token) accessToken = token;
 }
 
 export function clearAuth() {
-  globalThis.sessionStorage?.removeItem(TOKEN_KEY);
-  globalThis.sessionStorage?.removeItem(USER_ID_KEY);
+  accessToken = null;
+  currentUserId = null;
 }
 
-async function request(path, options = {}) {
+async function rawRequest(path, options = {}, includeAccessToken = true) {
   if (!apiBaseUrl) return { ok:false, message:"Cloud API is not configured." };
   const headers = { "content-type":"application/json", ...(options.headers || {}) };
-  const token = getStoredToken();
-  if (token) headers.authorization = "Bearer " + token;
+  if (includeAccessToken && accessToken) headers.authorization = "Bearer " + accessToken;
+
   try {
-    const response = await fetch(apiBaseUrl + path, { ...options, headers });
+    const response = await fetch(apiBaseUrl + path, {
+      ...options,
+      credentials:"include",
+      headers
+    });
     const body = await response.json().catch(() => ({}));
     if (response.ok) return { ok:true, status:response.status, body };
     const retryable = response.status === 408 || response.status === 429 || (response.status >= 500 && response.status <= 599);
@@ -51,20 +61,73 @@ async function request(path, options = {}) {
   }
 }
 
-async function authenticate(path, email, password) {
-  const result = await request(path, { method:"POST", body:JSON.stringify({ email, password }) });
-  if (!result.ok) return result;
-  if (!result.body?.accessToken) return { ok:false, message:"API did not return an access token." };
-  if (typeof result.body?.user?.id !== "string" || !result.body.user.id) {
-    return { ok:false, message:"API did not return a user identity." };
+export async function refreshAuth() {
+  if (!apiBaseUrl) return { ok:false, message:"Cloud API is not configured." };
+  if (refreshInFlight) return refreshInFlight;
+
+  refreshInFlight = (async () => {
+    const result = await rawRequest("/v1/auth/refresh", { method:"POST" }, false);
+    if (!result.ok) {
+      clearAuth();
+      return result;
+    }
+    if (!result.body?.accessToken || typeof result.body?.user?.id !== "string" || !result.body.user.id) {
+      clearAuth();
+      return { ok:false, status:502, malformedResponse:true, message:"GYM API returned an invalid authentication response." };
+    }
+    setAuthSession(result.body.accessToken, result.body.user.id);
+    return result;
+  })();
+
+  try {
+    return await refreshInFlight;
+  } finally {
+    refreshInFlight = null;
   }
-  setAuthToken(result.body.accessToken);
-  setCurrentUserId(result.body.user.id);
+}
+
+async function request(path, options = {}, allowRefresh = true) {
+  const result = await rawRequest(path, options);
+  if (result.ok || !result.authRequired || !allowRefresh || path.startsWith("/v1/auth/")) return result;
+
+  const refreshed = await refreshAuth();
+  if (!refreshed.ok) return result;
+  return rawRequest(path, options);
+}
+
+async function authenticate(path, email, password) {
+  const result = await rawRequest(path, {
+    method:"POST",
+    body:JSON.stringify({ email, password })
+  }, false);
+  if (!result.ok) return result;
+  if (!result.body?.accessToken) return { ok:false, status:502, malformedResponse:true, message:"API did not return an access token." };
+  if (typeof result.body?.user?.id !== "string" || !result.body.user.id) {
+    return { ok:false, status:502, malformedResponse:true, message:"API did not return a user identity." };
+  }
+  setAuthSession(result.body.accessToken, result.body.user.id);
   return result;
 }
 
-export function login(email, password) { return authenticate("/v1/auth/login", email, password); }
-export function register(email, password) { return authenticate("/v1/auth/register", email, password); }
+export function login(email, password) {
+  return authenticate("/v1/auth/login", email, password);
+}
+
+export function register(email, password) {
+  return authenticate("/v1/auth/register", email, password);
+}
+
+export async function logout() {
+  const result = await rawRequest("/v1/auth/logout", { method:"POST" }, false);
+  clearAuth();
+  return result.ok ? result : { ...result, ok:false };
+}
+
+export async function logoutAll() {
+  const result = await request("/v1/auth/logout-all", { method:"POST" }, false);
+  if (result.ok) clearAuth();
+  return result;
+}
 
 export async function syncSession(session) {
   if (!apiBaseUrl || !hasAuth()) return { ok:false, message:"Cloud sync is not configured." };
