@@ -38,7 +38,14 @@ function save() {
 
 function commitState(mutator) {
   const previous = structuredClone(state);
-  mutator();
+  try {
+    mutator();
+  } catch (error) {
+    state = previous;
+    console.error("GYM state mutation error", error);
+    announce("GYM could not apply that change. Your current session was restored.");
+    return false;
+  }
   if (save()) return true;
   state = previous;
   return false;
