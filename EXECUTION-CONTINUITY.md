@@ -168,17 +168,20 @@ Completed slices:
 - durable sync retry metadata with attempts, next-at timestamps, last-error retention, and blocked-state retention for permanent failures
 - bounded exponential backoff (5 seconds to 15 minutes) for transient sync failures
 - authentication failures remain immediately retryable after re-authentication
-- retry-reset primitive allows explicitly unblocking retained sync work without data loss
+- retry-reset primitive plus account/settings UI manual retry path for blocked retained workouts
 - overlapping sync flushes are prevented; scheduled retries wake when the next due item becomes eligible
+- retry metadata survives browser reload/state normalization without being stripped by storage migration
 - structured HTTP request telemetry records request ID, method, route, status, and duration without credential material
 - password-recovery delivery is bounded by a 5-second outbound timeout so a slow webhook cannot hold the request indefinitely
 
 Verification evidence:
-- CI run #387 passed on exact retry-layer head `7c000ffa6ea63525aa60f131ccfb67f748f38618`.
-- CI run #389 passed on exact observability/timeout head `cbd1e7ab2a4c766908696f3b0849e3b1b8f60fff`.
-- Both runs passed unit/API tests, PostgreSQL migrations + schema verification, HTTP smoke, dependency audit, static checks, production build, and output verification.
+- CI run #387 passed on retry-layer head `7c000ffa6ea63525aa60f131ccfb67f748f38618`.
+- CI run #389 passed on observability/timeout head `cbd1e7ab2a4c766908696f3b0849e3b1b8f60fff`.
+- CI run #392 passed on continuity checkpoint head `25f68698ed7f40eb948e556a347d0bbe86827186`.
+- CI run #399 passed on combined retry-storage-recovery head `f209ddafacb94ac7ebbf75297c46862fe2a540b1`.
+- These CI runs passed unit/API tests, PostgreSQL migrations + schema verification, HTTP smoke, dependency audit, static checks, production build, and output verification.
 
 Next Phase 4 implementation slice:
-- surface retained/blocked sync work in the account/settings UI with an explicit manual retry path
-- add targeted client recovery tests around scheduled backoff, account switching, and overlapping online/auth events
-- add bounded request/queue metrics that can feed centralized production observability without collecting workout or credential payloads.
+- add targeted client tests for scheduled retry/online/auth-event interaction and verify no duplicate flush side effects
+- expose unowned legacy sync records separately from authenticated pending work so they remain visible without ever being auto-assigned
+- extend observability with bounded sync outcome counters suitable for centralized production metrics, without collecting workout payloads.
