@@ -15,7 +15,8 @@ import {
   getDueSyncItems,
   getNextSyncRetryAt,
   recordSyncFailure,
-  removeSyncItem
+  removeSyncItem,
+  retrySyncItem
 } from "./sync-queue.js";
 
 const REST_SECONDS = 90;
@@ -102,6 +103,21 @@ async function refreshCloudHistory() {
     }
     render();
   }
+}
+
+function retryPendingSync(sessionId) {
+  const previousQueue = state.syncQueue;
+  const nextQueue = retrySyncItem(state.syncQueue, sessionId);
+  if (JSON.stringify(nextQueue) === JSON.stringify(previousQueue)) {
+    return Promise.resolve({ ok:false, message:"Pending workout was not found." });
+  }
+  state.syncQueue = nextQueue;
+  if (!save()) {
+    state.syncQueue = previousQueue;
+    return Promise.resolve({ ok:false, message:"Pending retry could not be saved on this device." });
+  }
+  void flushSyncQueue();
+  return Promise.resolve({ ok:true });
 }
 
 function scheduleSyncRetry() {
@@ -819,7 +835,7 @@ function wire() {
     render();
   }));
 
-  wireAccount({ render, announce });
+  wireAccount({ render, announce, retrySync: retryPendingSync });
 
   $$("[data-action='clear-data']").forEach((button) => button.addEventListener("click", () => {
     const confirmed = window.confirm("Delete all local GYM data from this browser?");
