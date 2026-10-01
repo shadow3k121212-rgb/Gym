@@ -100,7 +100,7 @@ function startSession() {
   render();
 }
 
-function finishSession() {
+async function finishSession() {
   if (!state.session) return;
   const summary = sessionSummary();
   if (summary.completedSets === 0) {
@@ -109,6 +109,7 @@ function finishSession() {
   }
   const completedAt = new Date().toISOString();
   state.session.completedAt = completedAt;
+  const finishedSession = structuredClone(state.session);
   state.history = [...realHistory(), {
     id: state.session.id,
     date: completedAt.slice(0, 10),
