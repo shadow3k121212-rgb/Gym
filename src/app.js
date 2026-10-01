@@ -108,7 +108,6 @@ function startSession() {
   state.activeView = "workout";
   save();
   render();
-void flushSyncQueue();
 }
 
 async function finishSession() {
@@ -611,3 +610,4 @@ if ("serviceWorker" in navigator) {
 }
 
 render();
+void flushSyncQueue();
