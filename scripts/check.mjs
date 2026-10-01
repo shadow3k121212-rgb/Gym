@@ -6,7 +6,7 @@ const required = [
   "package.json","README.md","ARCHITECTURE.md","PRODUCT.md","BETA-RELEASE.md","SECURITY.md",
   "backend/README.md","public/runtime-config.js","backend/openapi.yaml","backend/server.mjs","backend/src/server.js","backend/src/auth.js",
   "backend/src/validation.js","backend/src/pagination.js","backend/src/repository.js","backend/src/memory-repository.js",
-  "backend/migrations/001_initial.sql","backend/migrations/002_auth.sql","backend/migrations/003_seed_exercises.sql","backend/migrations/004_session_idempotency_hash.sql","backend/migrations/005_movement_event_idempotency.sql","backend/migrations/006_movement_event_reps.sql","backend/migrations/007_auth_sessions.sql",
+  "backend/migrations/001_initial.sql","backend/migrations/002_auth.sql","backend/migrations/003_seed_exercises.sql","backend/migrations/004_session_idempotency_hash.sql","backend/migrations/005_movement_event_idempotency.sql","backend/migrations/006_movement_event_reps.sql","backend/migrations/007_auth_sessions.sql","backend/migrations/008_password_reset.sql","backend/migrations/009_account_deletion_audit.sql",
   ".github/workflows/ci.yml"
 ];
 for (const file of required) await access(file);
@@ -34,7 +34,10 @@ for (const migration of [
   "backend/migrations/003_seed_exercises.sql",
   "backend/migrations/004_session_idempotency_hash.sql",
   "backend/migrations/005_movement_event_idempotency.sql",
-  "backend/migrations/006_movement_event_reps.sql"
+  "backend/migrations/006_movement_event_reps.sql",
+  "backend/migrations/007_auth_sessions.sql",
+  "backend/migrations/008_password_reset.sql",
+  "backend/migrations/009_account_deletion_audit.sql"
 ]) {
   const sql = await readFile(migration, "utf8");
   if (/^\s*BEGIN;|\bCOMMIT;\s*$/im.test(sql)) {
