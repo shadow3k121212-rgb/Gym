@@ -8,6 +8,7 @@ import {
   summarizeSession,
   suggestProgression
 } from "./workout-engine.js";
+import { displayUnit, toDisplayVolume, toDisplayWeight, toKg, weightInputStep } from "./units.js";
 
 const REST_SECONDS = 90;
 let state = loadState();
@@ -47,6 +48,18 @@ function todayLabel() {
 
 function formatNumber(value, maximumFractionDigits = 1) {
   return new Intl.NumberFormat("en-IN", { maximumFractionDigits }).format(Number(value) || 0);
+}
+
+function unit() {
+  return displayUnit(state.settings.units);
+}
+
+function displayWeight(weightKg, digits = 1) {
+  return formatNumber(toDisplayWeight(weightKg, unit()), digits);
+}
+
+function displayVolume(volumeKg, digits = 0) {
+  return formatNumber(toDisplayVolume(volumeKg, unit()), digits);
 }
 
 function formatDuration(totalSeconds) {
@@ -153,7 +166,9 @@ function updateSet(exerciseId, setIndex, field, value) {
   }
   if (field === "weightKg") {
     const next = Number(value);
-    set.weightKg = Number.isFinite(next) ? Math.max(0, Math.min(1000, next)) : set.weightKg;
+    if (Number.isFinite(next)) {
+      set.weightKg = Math.max(0, Math.min(1000, toKg(next, unit())));
+    }
   }
   if (field === "rpe") {
     const next = value === "" ? null : Number(value);
@@ -294,8 +309,8 @@ function dashboard() {
 
       <article class="stat-card">
         <div class="eyebrow">${history.length ? "YOUR RECORDED LOAD" : "WEEKLY LOAD · SAMPLE"}</div>
-        <div class="stat-number">${formatNumber((history.length ? totalVolume : displayHistory.reduce((sum, item) => sum + Number(item.volumeKg || 0), 0)) / 1000)}k</div>
-        <div class="stat-caption">kg moved ${history.length ? "across saved sessions" : "in preview data"}</div>
+        <div class="stat-number">${displayVolume((history.length ? totalVolume : displayHistory.reduce((sum, item) => sum + Number(item.volumeKg || 0), 0)) / 1000, 1)}k</div>
+        <div class="stat-caption">${unit()} moved ${history.length ? "across saved sessions" : "in preview data"}</div>
         <div class="mini-bars">
           ${displayHistory.map((item) => `
             <div class="bar-wrap" title="${escapeHtml(item.date || "")}">
@@ -314,7 +329,7 @@ function dashboard() {
         </div>
         <div class="metric-row">
           <div><span class="metric-value">${history.length}</span><span class="metric-label">saved sessions</span></div>
-          <div><span class="metric-value">${history.length ? formatNumber(totalVolume / history.length / 1000, 1) + "k" : "—"}</span><span class="metric-label">avg session volume</span></div>
+          <div><span class="metric-value">${history.length ? displayVolume(totalVolume / history.length / 1000, 1) + "k" : "—"}</span><span class="metric-label">avg session volume</span></div>
           <div><span class="metric-value">${history.length ? Math.max(...history.map((item) => Number(item.sets || 0))) : "—"}</span><span class="metric-label">best set count</span></div>
         </div>
         <div class="progress-line"><span style="width:${Math.min(100, history.length ? Math.max(8, history.length * 8) : 0)}%"></span></div>
@@ -341,7 +356,7 @@ function dashboard() {
             <div class="exercise-row">
               <div class="exercise-index">0${index + 1}</div>
               <div class="exercise-main"><strong>${escapeHtml(exercise.name)}</strong><span>${escapeHtml(exercise.muscle)} · ${exercise.targetSets} × ${exercise.targetReps}</span></div>
-              <div class="exercise-load">${exercise.loadKg ? formatNumber(exercise.loadKg, 1) + " kg" : "BW"}</div>
+              <div class="exercise-load">${exercise.loadKg ? displayWeight(exercise.loadKg, 1) + " " + unit() : "BW"}</div>
             </div>`;
         }).join("")}
       </div>
@@ -384,7 +399,7 @@ function workoutView() {
 
         ${next ? `<div class="next-set-banner">
           <div><span class="eyebrow">UP NEXT</span><strong>${escapeHtml(next.exercise.name)} · Set ${next.exercise.sets.findIndex((set) => !set.completed) + 1}</strong></div>
-          <span class="next-load">${next.open.weightKg ? formatNumber(next.open.weightKg, 1) + " kg" : "BODYWEIGHT"}</span>
+          <span class="next-load">${next.open.weightKg ? displayWeight(next.open.weightKg, 1) + " " + unit() : "BODYWEIGHT"}</span>
         </div>` : `<div class="next-set-banner is-done"><div><span class="eyebrow">SESSION TARGET</span><strong>All planned sets complete.</strong></div><span class="next-load">READY TO FINISH</span></div>`}
 
         <div class="set-list">
@@ -394,7 +409,7 @@ function workoutView() {
               <div class="set-content">
                 <div class="set-title">
                   <div><strong>${escapeHtml(exercise.name)}</strong><span>${escapeHtml(exercise.muscle)} · ${exercise.targetSets} × ${exercise.targetReps}</span></div>
-                  <b>${exercise.loadKg ? formatNumber(exercise.loadKg, 1) + " kg base" : "BODYWEIGHT"}</b>
+                  <b>${exercise.loadKg ? displayWeight(exercise.loadKg, 1) + " " + unit() + " base" : "BODYWEIGHT"}</b>
                 </div>
 
                 <div class="set-table-head"><span>SET</span><span>REPS</span><span>LOAD</span><span>RPE</span><span>DONE</span></div>
@@ -403,14 +418,14 @@ function workoutView() {
                   <div class="set-row ${set.completed ? "is-complete" : ""}">
                     <span class="set-index">${set.index}</span>
                     <input class="set-input" inputmode="numeric" type="number" min="0" max="1000" value="${escapeHtml(set.reps)}" data-input="reps" data-exercise="${exercise.id}" data-set="${setIndex}" aria-label="${escapeHtml(exercise.name)} set ${set.index} reps">
-                    <input class="set-input" inputmode="decimal" type="number" min="0" max="1000" step="0.5" value="${escapeHtml(set.weightKg)}" data-input="weightKg" data-exercise="${exercise.id}" data-set="${setIndex}" aria-label="${escapeHtml(exercise.name)} set ${set.index} load in kilograms">
+                    <input class="set-input" inputmode="decimal" type="number" min="0" max="1000" step="${weightInputStep(unit())}" value="${escapeHtml(displayWeight(set.weightKg, 1))}" data-input="weightKg" data-exercise="${exercise.id}" data-set="${setIndex}" aria-label="${escapeHtml(exercise.name)} set ${set.index} load in ${unit()}">
                     <input class="set-input" inputmode="decimal" type="number" min="1" max="10" step="0.5" placeholder="—" value="${set.rpe ?? ""}" data-input="rpe" data-exercise="${exercise.id}" data-set="${setIndex}" aria-label="${escapeHtml(exercise.name)} set ${set.index} RPE">
                     <button class="set-check ${set.completed ? "is-done" : ""}" data-toggle-set data-exercise="${exercise.id}" data-set="${setIndex}" aria-label="${set.completed ? "Mark set incomplete" : "Complete set"}">${set.completed ? icon("check") : ""}</button>
                   </div>`).join("")}
 
                 <div class="set-footer">
                   <span>${exercise.cues.slice(0, 2).map(escapeHtml).join(" · ")}</span>
-                  <span>Next: ${formatNumber(suggestProgression(exercise.loadKg, exercise.sets.filter((set) => set.completed).length, exercise.targetSets), 1)} kg</span>
+                  <span>Next: ${displayWeight(suggestProgression(exercise.loadKg, exercise.sets.filter((set) => set.completed).length, exercise.targetSets), 1)} ${unit()}</span>
                 </div>
               </div>
             </article>`).join("")}
@@ -420,12 +435,12 @@ function workoutView() {
       <aside class="workout-side">
         <div class="panel sticky">
           <div class="eyebrow">SESSION OUTPUT</div>
-          <div class="big-output">${formatNumber(summary.volumeKg)} <small>kg</small></div>
+          <div class="big-output">${displayVolume(summary.volumeKg)} <small>${unit()}</small></div>
           <div class="output-label">completed-set volume</div>
           <div class="output-grid">
             <div><b>${summary.completedSets}</b><span>of ${summary.totalSets} sets</span></div>
             <div><b>${Math.round(summary.completion * 100)}%</b><span>complete</span></div>
-            <div><b>${formatNumber(summary.estimatedOneRepMaxKg, 1)}</b><span>best est. 1RM</span></div>
+            <div><b>${displayWeight(summary.estimatedOneRepMaxKg, 1)}</b><span>best est. 1RM</span></div>
             <div class="rest-card"><b data-rest-timer>${restRemaining > 0 ? formatDuration(restRemaining) : "READY"}</b><span>rest timer</span></div>
           </div>
           <button class="primary-button full" data-action="finish">Save session</button>
@@ -451,7 +466,7 @@ function progressView() {
         <div class="large-bars">
           ${display.map((item) => `
             <div class="large-bar-wrap">
-              <b>${formatNumber(Number(item.volumeKg || 0) / 1000, 1)}k</b>
+              <b>${displayVolume(Number(item.volumeKg || 0) / 1000, 1)}k</b>
               <div class="large-bar" style="height:${Math.max(8, (Number(item.volumeKg || 0) / top) * 100)}%"></div>
               <span>${escapeHtml(item.date || "")}</span>
             </div>`).join("")}
@@ -461,9 +476,9 @@ function progressView() {
       <div class="panel">
         <div class="eyebrow">PERSONAL SIGNALS</div>
         <div class="signal-list">
-          <div class="signal"><span>Total tracked volume</span><b>${formatNumber(totalVolume)} kg</b><small>${history.length ? "From saved sessions on this device" : "Preview only — not your data"}</small></div>
+          <div class="signal"><span>Total tracked volume</span><b>${displayVolume(totalVolume)} ${unit()}</b><small>${history.length ? "From saved sessions on this device" : "Preview only — not your data"}</small></div>
           <div class="signal"><span>Sessions</span><b>${history.length}</b><small>${history.length ? "Saved locally" : "Start your first workout"}</small></div>
-          <div class="signal"><span>Current best estimated 1RM</span><b>${state.session ? formatNumber(sessionSummary().estimatedOneRepMaxKg, 1) + " kg" : "—"}</b><small>${state.session ? "From current completed sets" : "Appears during an active session"}</small></div>
+          <div class="signal"><span>Current best estimated 1RM</span><b>${state.session ? displayWeight(sessionSummary().estimatedOneRepMaxKg, 1) + " " + unit() : "—"}</b><small>${state.session ? "From current completed sets" : "Appears during an active session"}</small></div>
         </div>
       </div>
     </section>
