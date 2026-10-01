@@ -15,6 +15,7 @@ const REST_SECONDS = 90;
 let state = loadState();
 let restTimer = null;
 let restRemaining = 0;
+let lastSetAction = null;
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -30,7 +31,17 @@ function escapeHtml(value) {
 }
 
 function save() {
-  return persistState(state);
+  const ok = persistState(state);
+  if (!ok) announce("GYM could not save this change on this device. Try again.");
+  return ok;
+}
+
+function commitState(mutator) {
+  const previous = structuredClone(state);
+  mutator();
+  if (save()) return true;
+  state = previous;
+  return false;
 }
 
 async function refreshCloudHistory() {
@@ -133,10 +144,11 @@ function sessionSummary() {
 }
 
 function startSession() {
-  if (!state.session) state.session = createEmptySession();
-  state.activeView = "workout";
-  save();
-  render();
+  const committed = commitState(() => {
+    if (!state.session) state.session = createEmptySession();
+    state.activeView = "workout";
+  });
+  if (committed) render();
 }
 
 async function finishSession() {
@@ -146,9 +158,16 @@ async function finishSession() {
     announce("Complete at least one set before finishing.");
     return;
   }
+  if (summary.completedSets < summary.totalSets) {
+    const confirmed = window.confirm("Only " + summary.completedSets + " of " + summary.totalSets + " planned sets are complete. Save this partial session?");
+    if (!confirmed) return;
+  }
+
   const completedAt = new Date().toISOString();
-  state.session.completedAt = completedAt;
+  const previous = structuredClone(state);
   const finishedSession = structuredClone(state.session);
+  finishedSession.completedAt = completedAt;
+  state.session.completedAt = completedAt;
   state.history = [...realHistory(), {
     id: state.session.id,
     date: completedAt.slice(0, 10),
@@ -160,16 +179,23 @@ async function finishSession() {
   state.session = null;
   state.activeView = "dashboard";
   state.sampleData = false;
-  save();
+
+  if (!save()) {
+    state = previous;
+    render();
+    return;
+  }
+
   stopRestTimer();
+  lastSetAction = null;
   announce("Session saved. Your progress is now part of your training history.");
   render();
+
   if (hasApi() && hasAuth()) {
     const sync = await syncSession(finishedSession);
     if (sync.ok) {
       state.syncQueue = (state.syncQueue || []).filter((item) => item.id !== finishedSession.id);
-      save();
-      announce("Session saved locally and synced.");
+      if (save()) announce("Session saved locally and synced.");
     } else {
       state.syncQueue = [
         ...(state.syncQueue || []).filter((item) => item.id !== finishedSession.id),
@@ -183,25 +209,24 @@ async function finishSession() {
 
 function updateSet(exerciseId, setIndex, field, value) {
   if (!state.session) return;
-  const entry = state.session.exercises.find((item) => item.exerciseId === exerciseId);
-  const set = entry?.sets[setIndex];
-  if (!set) return;
+  commitState(() => {
+    const entry = state.session.exercises.find((item) => item.exerciseId === exerciseId);
+    const set = entry?.sets[setIndex];
+    if (!set) return;
 
-  if (field === "reps") {
-    const next = Number(value);
-    set.reps = Number.isFinite(next) ? Math.max(0, Math.min(1000, next)) : set.reps;
-  }
-  if (field === "weightKg") {
-    const next = Number(value);
-    if (Number.isFinite(next)) {
-      set.weightKg = Math.max(0, Math.min(1000, toKg(next, unit())));
+    if (field === "reps") {
+      const next = Number(value);
+      set.reps = Number.isFinite(next) ? Math.max(0, Math.min(1000, next)) : set.reps;
     }
-  }
-  if (field === "rpe") {
-    const next = value === "" ? null : Number(value);
-    set.rpe = next === null ? null : (Number.isFinite(next) ? Math.max(1, Math.min(10, next)) : set.rpe);
-  }
-  save();
+    if (field === "weightKg") {
+      const next = Number(value);
+      if (Number.isFinite(next)) set.weightKg = Math.max(0, Math.min(1000, toKg(next, unit())));
+    }
+    if (field === "rpe") {
+      const next = value === "" ? null : Number(value);
+      set.rpe = next === null ? null : (Number.isFinite(next) ? Math.max(1, Math.min(10, next)) : set.rpe);
+    }
+  });
 }
 
 function toggleSet(exerciseId, setIndex) {
@@ -210,11 +235,34 @@ function toggleSet(exerciseId, setIndex) {
   const set = entry?.sets[setIndex];
   if (!set) return;
 
-  set.completed = !set.completed;
-  set.completedAt = set.completed ? new Date().toISOString() : null;
+  const previous = { exerciseId, setIndex, completed: set.completed, completedAt: set.completedAt };
+  const committed = commitState(() => {
+    set.completed = !set.completed;
+    set.completedAt = set.completed ? new Date().toISOString() : null;
+  });
+  if (!committed) return;
+
+  lastSetAction = previous.completed ? null : previous;
   if (set.completed) startRestTimer();
-  save();
   render();
+  announce(set.completed ? "Set " + set.index + " completed. Rest timer started." : "Set " + set.index + " marked incomplete.");
+}
+
+function undoLastSetAction() {
+  if (!state.session || !lastSetAction) return;
+  const action = lastSetAction;
+  const committed = commitState(() => {
+    const entry = state.session.exercises.find((item) => item.exerciseId === action.exerciseId);
+    const set = entry?.sets[action.setIndex];
+    if (!set) return;
+    set.completed = action.completed;
+    set.completedAt = action.completedAt;
+  });
+  if (!committed) return;
+  lastSetAction = null;
+  stopRestTimer();
+  render();
+  announce("Last set action was undone.");
 }
 
 function startRestTimer() {
@@ -471,6 +519,7 @@ function workoutView() {
             <div class="rest-card"><b data-rest-timer>${restRemaining > 0 ? formatDuration(restRemaining) : "READY"}</b><span>rest timer</span></div>
           </div>
           <button class="primary-button full" data-action="finish">Save session</button>
+          <button class="secondary-button full" data-action="undo-set">Undo last set action</button>
           <button class="secondary-button full" data-action="reset-session">Discard session</button>
           <div class="micro-note">Set-level records are timestamped and stored with explicit source labels for future analytics and movement intelligence.</div>
         </div>
@@ -574,16 +623,25 @@ function wire() {
     announce("Your local data export was created.");
   }));
 
-  $$("[data-action='reset-session']").forEach((button) => button.addEventListener("click", () => {
-    state.session = null;
-    save();
+  $("[data-action='reset-session']").forEach((button) => button.addEventListener("click", () => {
+    const confirmed = window.confirm("Discard this active workout? Logged work in this session will be removed.");
+    if (!confirmed) return;
+    const committed = commitState(() => {
+      state.session = null;
+      state.activeView = "dashboard";
+    });
+    if (!committed) return;
+    lastSetAction = null;
+    stopRestTimer();
     render();
     announce("Active session discarded.");
   }));
 
-  $$("[data-toggle-set]").forEach((button) => button.addEventListener("click", () => {
+  $("[data-toggle-set]").forEach((button) => button.addEventListener("click", () => {
     toggleSet(button.dataset.exercise, Number(button.dataset.set));
   }));
+
+  $("[data-action='undo-set']").forEach((button) => button.addEventListener("click", undoLastSetAction));
 
   $$("[data-input]").forEach((input) => {
     input.addEventListener("change", () => {
@@ -638,6 +696,8 @@ function wire() {
     if (!confirmed) return;
     clearState();
     state = defaultState([]);
+    lastSetAction = null;
+    stopRestTimer();
     render();
     announce("Local GYM data deleted.");
   }));
