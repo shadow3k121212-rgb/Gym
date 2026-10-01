@@ -42,3 +42,8 @@ See [PRODUCT.md](./PRODUCT.md) for the launch plan, [ARCHITECTURE.md](./ARCHITEC
 ## License
 
 MIT. See [LICENSE](./LICENSE).
+
+
+## CI evidence
+
+CI validates frontend/backend tests, fresh PostgreSQL migrations and schema integrity, HTTP smoke coverage, dependency audit, static checks, and the production build before the branch is considered verified.
