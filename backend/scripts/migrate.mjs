@@ -1,5 +1,6 @@
 import { readFile, readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Pool } from "pg";
 
 if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required.");
