@@ -8,10 +8,10 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const client = await pool.connect();
 
 try {
-  await client.query(\`create table if not exists schema_migrations (
+  await client.query(`create table if not exists schema_migrations (
     version text primary key,
     applied_at timestamptz not null default now()
-  )\`);
+  )`);
 
   const dir = new URL("../migrations/", import.meta.url);
   const files = (await readdir(dir)).filter((name) => name.endsWith(".sql")).sort();
@@ -31,7 +31,7 @@ try {
       await client.query("rollback");
       throw error;
     }
-    console.log(\`applied \${file}\`);
+    console.log(`applied ${file}`);
   }
 } finally {
   client.release();
