@@ -6,7 +6,7 @@ function makeStorage(initial = {}) {
   const data = new Map(Object.entries(initial));
   return { getItem:(key)=>data.has(key)?data.get(key):null, setItem:(key,value)=>data.set(key,value), removeItem:(key)=>data.delete(key) };
 }
-test("loads a clean v2 state", () => { const state = loadState(makeStorage()); assert.equal(state.schemaVersion, 2); assert.equal(state.session, null); });
+test("loads a clean v2 state with a durable sync queue", () => { const state = loadState(makeStorage()); assert.equal(state.schemaVersion, 2); assert.equal(state.session, null); assert.deepEqual(state.syncQueue, []); });
 test("migrates old v1 history", () => {
   const state = loadState(makeStorage({"gym:state:v1":JSON.stringify({history:[{day:"Mon",volume:1000}]})}));
   assert.equal(state.schemaVersion, 2); assert.equal(state.history[0].volumeKg,1000); assert.equal(state.sampleData,false);
