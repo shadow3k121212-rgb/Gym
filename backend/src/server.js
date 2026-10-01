@@ -82,7 +82,7 @@ function clearRefreshCookie() {
   return `${REFRESH_COOKIE}=; HttpOnly; Path=/v1/auth; SameSite=Lax; Max-Age=0${secure}`;
 }
 
-function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
+export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
   if (!repo) throw new Error("Repository is required.");
   if (!jwtSecret || jwtSecret.length < 32) throw new Error("JWT secret must be at least 32 characters.");
 
