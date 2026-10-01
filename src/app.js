@@ -1,4 +1,5 @@
 import { EXERCISES, SAMPLE_HISTORY, WORKOUT, createEmptySession, getExercise } from "./data.js";
+import { hasApi, hasAuth, syncSession } from "./api.js";
 import { clearState, defaultState, exportState, loadState, persistState } from "./storage.js";
 import {
   estimateOneRepMax,
@@ -122,6 +123,10 @@ function finishSession() {
   stopRestTimer();
   announce("Session saved. Your progress is now part of your training history.");
   render();
+  if (hasApi() && hasAuth()) {
+    const sync = await syncSession(finishedSession);
+    announce(sync.ok ? "Session saved locally and synced." : "Session saved locally. Cloud sync will retry later.");
+  }
 }
 
 function updateSet(exerciseId, setIndex, field, value) {

@@ -8,7 +8,7 @@ const ASSETS = [
   "./src/styles.css",
   "./src/workout-engine.js",
   "./public/manifest.webmanifest",
-  "./public/favicon.svg"
+  "./public/favicon.svg", "./public/runtime-config.js"
 ];
 
 self.addEventListener("install", (event) => {
