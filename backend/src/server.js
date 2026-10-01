@@ -219,9 +219,13 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
           const deliveryUrl = process.env.PASSWORD_RESET_WEBHOOK_URL;
           if (deliveryUrl) {
             try {
+              const headers = {"content-type":"application/json"};
+              if (process.env.PASSWORD_RESET_WEBHOOK_SECRET) {
+                headers["x-gym-delivery-secret"] = process.env.PASSWORD_RESET_WEBHOOK_SECRET;
+              }
               const delivery = await fetch(deliveryUrl, {
                 method:"POST",
-                headers:{"content-type":"application/json"},
+                headers,
                 body:JSON.stringify({
                   email:resetUser.email,
                   resetToken,
