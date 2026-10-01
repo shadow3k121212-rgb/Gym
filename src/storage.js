@@ -110,7 +110,7 @@ export function loadState(storage = globalThis.localStorage) {
       session: normalizeSession(current.session),
       history: normalizeHistory(current.history),
       syncQueue: normalizeSyncQueue(current.syncQueue)
-        .map((item) => ({ userId: item.userId, session: normalizeSession(item.session) }))
+        .map((item) => ({ ...item, session: normalizeSession(item.session) }))
         .filter((item) => item.session),
       settings: {
         ...base.settings,
