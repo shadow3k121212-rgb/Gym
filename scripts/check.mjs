@@ -22,4 +22,18 @@ const pkg = JSON.parse(await readFile("package.json", "utf8"));
 if (pkg.type !== "module") throw new Error("package.json must use ESM");
 const backendPkg = JSON.parse(await readFile("backend/package.json", "utf8"));
 if (backendPkg.type !== "module") throw new Error("backend package must use ESM");
+
+for (const migration of [
+  "backend/migrations/001_initial.sql",
+  "backend/migrations/002_auth.sql",
+  "backend/migrations/003_seed_exercises.sql",
+  "backend/migrations/004_session_idempotency_hash.sql",
+  "backend/migrations/005_movement_event_idempotency.sql"
+]) {
+  const sql = await readFile(migration, "utf8");
+  if (/^\s*BEGIN;|\bCOMMIT;\s*$/im.test(sql)) {
+    throw new Error(`Migration ${migration} must not own the transaction; migrate.mjs does.`);
+  }
+}
+
 console.log("Static integrity + syntax checks passed.");
