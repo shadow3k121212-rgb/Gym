@@ -184,3 +184,41 @@ test("classifies network failures as retryable", async () => {
     globalThis.__GYM_CONFIG__ = originalConfig;
   }
 });
+test("refreshes the access session once after a protected 401 and retries the request", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalStorageDescriptor = installStorage(new Map());
+  const originalConfig = globalThis.__GYM_CONFIG__;
+  globalThis.__GYM_CONFIG__ = { apiBaseUrl:"https://api.example.test" };
+  let calls = 0;
+  const responses = [
+    new Response(JSON.stringify({ error:{ message:"Authentication required." } }), {
+      status:401,
+      headers:{ "content-type":"application/json" }
+    }),
+    new Response(JSON.stringify({
+      user:{ id:"123e4567-e89b-12d3-a456-426614174000" },
+      accessToken:"refreshed-token"
+    }), {
+      status:200,
+      headers:{ "content-type":"application/json" }
+    }),
+    new Response(JSON.stringify({ sessions:[], nextCursor:null }), {
+      status:200,
+      headers:{ "content-type":"application/json" }
+    })
+  ];
+  globalThis.fetch = async () => responses[calls++];
+
+  try {
+    const module = await import("../src/api.js?auto-refresh-test=" + Date.now());
+    module.setAuthSession("expired-token", "123e4567-e89b-12d3-a456-426614174000");
+    const result = await module.listCloudSessions(20);
+    assert.equal(result.ok, true);
+    assert.equal(calls, 3);
+    assert.equal(module.hasAuth(), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreStorage(originalStorageDescriptor);
+    globalThis.__GYM_CONFIG__ = originalConfig;
+  }
+});
