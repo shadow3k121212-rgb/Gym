@@ -36,8 +36,9 @@ Every change should be:
 ## Current checkpoint
 - Branch: `product/foundation-10x`
 - Completed foundation work: local-first workout UI, backend API, PostgreSQL schema/migrations, idempotent writes, CI, initial security hardening.
-- Current phase: **Phase 1 — Core workout loop hardening**
+- Current phase: **Phase 2 — Data model + sync correctness**
 - Status: IN PROGRESS
+- Last completed phase: **Phase 1 — Core workout loop hardening**
 
 ## Phase 1 definition of done
 - No silent state loss on normal user interactions
@@ -51,9 +52,9 @@ Every change should be:
 - CI is green
 
 ## Next phase after completion
-Phase 2 — Data model + sync correctness
+Phase 3 — Identity, sessions, authorization, account lifecycle
 
-## Phase 1 progress log — 2026-10-01
+## Phase 1 completion log — 2026-10-01
 Implemented:
 - transactional local state commits with rollback on persistence failure
 - explicit confirmation before discarding an active workout
@@ -61,16 +62,38 @@ Implemented:
 - transient undo for the latest set-completion action
 - timer cleanup when a session/data is discarded
 - persisted-state normalization/recovery for malformed v2 localStorage
+- completed-set timestamp invariants during persisted-state recovery
 - movement-event rep persistence and schema migration hardening
 - corrected CI workflow timeout placement
 - corrected product documentation that contradicted the implemented backend foundation
+- fixed selector collection wiring so workout/settings event binding uses the collection helper consistently
+- added static regression detection for accidental single-selector `forEach` calls
+- extended migration integrity checks through migration 006
 
 Verification evidence:
 - CI run #141 passed all configured checks after the CI workflow fix.
 - CI run #147 passed all configured checks after workout recovery hardening.
-- Latest heads are still under CI verification; Phase 1 remains IN PROGRESS until the final current-head CI run is green.
+- CI run #160 passed all configured checks on the mutation-rollback head.
+- CI run #176 passed all configured checks on final Phase 1 head `e89cac686305d81bae35ad573f9f3aaecf950dc7`.
+- On run #176, unit/API tests, PostgreSQL migrations + schema verification, HTTP smoke, dependency audit, static checks, and production build/output verification passed.
 
-Next remaining Phase 1 review:
-- verify final CI on the latest head
-- inspect any new failures/regressions
-- update this checkpoint only after evidence confirms completion
+Phase 1 status: COMPLETE.
+Any later PR-context check remains verification-only; the direct branch CI for the resulting head is green.
+
+## Phase 2 definition of done
+- Sync outbox never silently drops unsynced user work.
+- Queue operations are idempotent and deduplicated by stable session identity.
+- Retry behavior distinguishes transient network/server failures from authentication failures.
+- Expired/invalid auth does not leave the user in a misleading “synced” state.
+- Cloud history merge is deterministic and cannot overwrite valid local data with malformed remote records.
+- Sync persistence failures are surfaced truthfully.
+- Pagination/limits have explicit semantics and no hidden truncation of durable work.
+- Server and client schemas remain compatible through explicit versioned contracts.
+- Critical sync/idempotency tests cover success, replay, conflict, retry, offline, malformed response, and auth-expiry cases.
+
+## Next phase work
+- audit and redesign the durable local sync queue
+- make auth-expiry/re-auth behavior explicit
+- harden remote history validation and merge semantics
+- add regression tests for outbox retention and sync failure handling
+- preserve the current local-first source-of-truth contract while cloud synchronization remains optional
