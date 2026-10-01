@@ -35,10 +35,10 @@ function requestId(req) {
   return typeof candidate === "string" && /^[A-Za-z0-9._:-]{1,100}$/.test(candidate) ? candidate : randomUUID();
 }
 
-function authLimit(map, key, now = Date.now()) {
+function authLimit(map, key, maxFailures = 5, now = Date.now()) {
   const item = map.get(key);
   if (!item || now >= item.resetAt) return { allowed: true };
-  return item.failures >= 5
+  return item.failures >= maxFailures
     ? { allowed: false, retryAfter: Math.ceil((item.resetAt - now) / 1000) }
     : { allowed: true };
 }
@@ -95,6 +95,10 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
       }
 
       if (path === "/v1/auth/register" && req.method === "POST") {
+        const key = "register:" + (req.socket.remoteAddress || "unknown");
+        const limit = authLimit(authFailures, key, 5);
+        if (!limit.allowed) return okError(res, 429, "Too many account creation attempts. Try again later.", id, { retryAfter: limit.retryAfter });
+        authFailure(authFailures, key);
         const body = await readJson(req);
         const email = normalizeEmail(body.email);
         const password = validatePassword(body.password);
@@ -108,7 +112,7 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
       }
 
       if (path === "/v1/auth/login" && req.method === "POST") {
-        const key = req.socket.remoteAddress || "unknown";
+        const key = "login:" + (req.socket.remoteAddress || "unknown");
         const limit = authLimit(authFailures, key);
         if (!limit.allowed) return okError(res, 429, "Too many failed login attempts. Try again later.", id, { retryAfter: limit.retryAfter });
         const body = await readJson(req);
@@ -149,9 +153,11 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
       }
 
       if (path === "/v1/movement-events" && req.method === "POST") {
+        const idem = req.headers["idempotency-key"];
+        if (typeof idem !== "string" || idem.length < 16 || idem.length > 128) return okError(res, 400, "Idempotency-Key is required (16–128 characters).", id);
         const event = validateMovementEvent(await readJson(req));
-        const saved = await repo.createMovementEvent(user.id, event);
-        return send(res, 201, { event:saved }, { ...cors, "x-request-id":id });
+        const result = await repo.createMovementEvent(user.id, event, idem);
+        return send(res, result.existing ? 200 : 201, { event:result.event }, { ...cors, "x-request-id":id });
       }
 
       return okError(res, 404, "Route not found.", id);
