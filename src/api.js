@@ -94,9 +94,18 @@ export async function refreshAuth() {
   }
 }
 
+const PUBLIC_AUTH_PATHS = new Set([
+  "/v1/auth/login",
+  "/v1/auth/register",
+  "/v1/auth/refresh",
+  "/v1/auth/logout",
+  "/v1/auth/password-reset/request",
+  "/v1/auth/password-reset/confirm"
+]);
+
 async function request(path, options = {}, allowRefresh = true) {
   const result = await rawRequest(path, options);
-  if (result.ok || !result.authRequired || !allowRefresh || path.startsWith("/v1/auth/")) return result;
+  if (result.ok || !result.authRequired || !allowRefresh || PUBLIC_AUTH_PATHS.has(path)) return result;
 
   const refreshed = await refreshAuth();
   if (!refreshed.ok) return result;
@@ -132,7 +141,7 @@ export async function logout() {
 }
 
 export async function logoutAll() {
-  const result = await request("/v1/auth/logout-all", { method:"POST" }, false);
+  const result = await request("/v1/auth/logout-all", { method:"POST" });
   clearAuth();
   return result;
 }
