@@ -13,7 +13,7 @@ for (const file of required) await access(file);
 for (const file of [
   "src/app.js","src/sw.js","src/workout-engine.js","src/data.js","src/storage.js","src/units.js",
   "backend/server.mjs","backend/src/server.js","backend/src/auth.js","backend/src/validation.js",
-  "backend/src/repository.js","backend/src/memory-repository.js","backend/scripts/migrate.mjs",
+  "backend/src/repository.js","backend/src/memory-repository.js","backend/scripts/migrate.mjs","backend/scripts/verify-schema.mjs",
   "scripts/build.mjs","scripts/dev.mjs"
 ]) {
   execFileSync(process.execPath, ["--check", file], { stdio: "inherit" });
