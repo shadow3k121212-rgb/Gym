@@ -51,6 +51,9 @@ export function validateSession(input) {
   const id = uuid(input.id, "Session id");
   const startedAt = isoDate(input.startedAt, "startedAt");
   const completedAt = input.completedAt == null ? null : isoDate(input.completedAt, "completedAt");
+  if (completedAt && new Date(completedAt) < new Date(startedAt)) {
+    throw new ValidationError("completedAt cannot be before startedAt.");
+  }
 
   if (!SOURCES.has(input.source)) throw new ValidationError("Unsupported session source.");
   if (input.name !== undefined && (typeof input.name !== "string" || input.name.length > 120)) {
@@ -80,6 +83,12 @@ export function validateSession(input) {
         }
         if (!completed && completedAtForSet) {
           throw new ValidationError("Incomplete sets cannot include completedAt.");
+        }
+        if (completedAtForSet && new Date(completedAtForSet) < new Date(startedAt)) {
+          throw new ValidationError("Set completedAt cannot be before startedAt.");
+        }
+        if (completedAtForSet && completedAt && new Date(completedAtForSet) > new Date(completedAt)) {
+          throw new ValidationError("Set completedAt cannot be after session completedAt.");
         }
         return {
           index: index + 1,
