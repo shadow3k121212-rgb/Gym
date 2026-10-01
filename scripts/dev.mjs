@@ -17,4 +17,4 @@ createServer((req, res) => {
   } catch {
     res.writeHead(404); res.end("Not found");
   }
-}).listen(4173, () => console.log("GYM running at http://localhost:4173"));
+}).listen(Number(process.env.PORT || 4173), () => console.log(`GYM running at http://localhost:${Number(process.env.PORT || 4173)}`));
