@@ -1,4 +1,6 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+
+const idempotencyHash = (input) => createHash("sha256").update(JSON.stringify(input)).digest("hex");
 
 export class MemoryRepository {
   constructor() {
@@ -36,10 +38,27 @@ export class MemoryRepository {
 
   async createSession(userId, input, idempotencyKey) {
     const idem = `${userId}:${idempotencyKey}`;
-    if (this.idempotency.has(idem)) return { existing:true, session:this.idempotency.get(idem) };
-    const session = { id:input.id, user_id:userId, name:input.name, source:input.source, started_at:input.startedAt, completed_at:null, exercises:input.exercises };
+    const requestHash = idempotencyHash(input);
+    const existing = this.idempotency.get(idem);
+    if (existing) {
+      if (existing.requestHash !== requestHash) {
+        const error = new Error("Idempotency key was already used with a different request payload.");
+        error.code = "IDEMPOTENCY_CONFLICT";
+        throw error;
+      }
+      return { existing:true, session:existing.session };
+    }
+    const session = {
+      id:input.id,
+      user_id:userId,
+      name:input.name,
+      source:input.source,
+      started_at:input.startedAt,
+      completed_at:input.completedAt,
+      exercises:input.exercises
+    };
     this.sessions.set(session.id, session);
-    this.idempotency.set(idem, session);
+    this.idempotency.set(idem, { session, requestHash });
     return { existing:false, session };
   }
 
