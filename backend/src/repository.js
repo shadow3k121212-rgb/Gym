@@ -1,5 +1,7 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Pool } from "pg";
+
+const idempotencyHash = (input) => createHash("sha256").update(JSON.stringify(input)).digest("hex");
 
 export class PostgresRepository {
   constructor(config = {}) {
@@ -45,21 +47,39 @@ export class PostgresRepository {
 
   async createSession(userId, input, idempotencyKey) {
     const client = await this.pool.connect();
+    const requestHash = idempotencyHash(input);
     try {
       await client.query("begin");
-      const existing = await client.query(
-        "select id,name,started_at,completed_at,source from workout_sessions where user_id=$1 and idempotency_key=$2 limit 1",
-        [userId, idempotencyKey]
+      const inserted = await client.query(
+        `insert into workout_sessions
+          (id,user_id,name,source,started_at,completed_at,idempotency_key,idempotency_request_hash)
+         values ($1,$2,$3,$4,$5,$6,$7,$8)
+         on conflict (user_id,idempotency_key) do nothing
+         returning id,name,started_at,completed_at,source,idempotency_request_hash`,
+        [input.id,userId,input.name,input.source,input.startedAt,input.completedAt,idempotencyKey,requestHash]
       );
-      if (existing.rowCount) {
-        await client.query("commit");
-        return { existing: true, session: existing.rows[0] };
-      }
 
-      await client.query(
-        "insert into workout_sessions (id,user_id,name,source,started_at,idempotency_key) values ($1,$2,$3,$4,$5,$6)",
-        [input.id,userId,input.name,input.source,input.startedAt,idempotencyKey]
-      );
+      if (!inserted.rowCount) {
+        const existing = await client.query(
+          `select id,name,started_at,completed_at,source,idempotency_request_hash
+           from workout_sessions
+           where user_id=$1 and idempotency_key=$2
+           for update`,
+          [userId, idempotencyKey]
+        );
+        if (!existing.rowCount) throw new Error("Idempotency replay could not be resolved.");
+        const row = existing.rows[0];
+        if (row.idempotency_request_hash && row.idempotency_request_hash !== requestHash) {
+          const error = new Error("Idempotency key was already used with a different request payload.");
+          error.code = "IDEMPOTENCY_CONFLICT";
+          throw error;
+        }
+        if (!row.idempotency_request_hash) {
+          await client.query("update workout_sessions set idempotency_request_hash=$1 where id=$2", [requestHash, row.id]);
+        }
+        await client.query("commit");
+        return { existing: true, session: row };
+      }
 
       for (const exercise of input.exercises) {
         for (const set of exercise.sets) {
@@ -70,8 +90,9 @@ export class PostgresRepository {
         }
       }
 
+      const session = inserted.rows[0];
       await client.query("commit");
-      return { existing: false, session: { id: input.id, name: input.name, started_at: input.startedAt, source: input.source } };
+      return { existing: false, session };
     } catch (error) {
       await client.query("rollback");
       throw error;
