@@ -4,7 +4,7 @@ import { decodeSessionCursor, encodeSessionCursor, normalizePageLimit, Paginatio
 
 test("round-trips stable session cursors", () => {
   const cursor = encodeSessionCursor({
-    startedAt:"2026-10-01T12:00:00.000Z",
+    startedAt:new Date("2026-10-01T12:00:00.000Z"),
     id:"123e4567-e89b-12d3-a456-426614174000"
   });
   assert.deepEqual(decodeSessionCursor(cursor), {
