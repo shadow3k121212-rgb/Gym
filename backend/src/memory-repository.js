@@ -226,7 +226,8 @@ export class MemoryRepository {
         expires_at:session.expires_at,
         last_seen_at:session.last_seen_at,
         revoked_at:session.revoked_at,
-        revocation_reason:session.revocation_reason
+        revocation_reason:session.revocation_reason,
+        status:session.revoked_at ? "revoked" : new Date(session.expires_at).getTime() <= Date.now() ? "expired" : "active"
       }));
   }
 
