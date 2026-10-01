@@ -10,6 +10,11 @@ const required = [
   ".github/workflows/ci.yml"
 ];
 for (const file of required) await access(file);
+const appSource = await readFile("src/app.js", "utf8");
+if (/\$\([^)]*\)\.forEach/.test(appSource)) {
+  throw new Error("Use $() for selector collections; $() returns one element.");
+}
+
 for (const file of [
   "src/app.js","src/sw.js","src/workout-engine.js","src/data.js","src/storage.js","src/units.js","src/history-sync.js",
   "backend/server.mjs","backend/src/server.js","backend/src/auth.js","backend/src/validation.js",
@@ -28,7 +33,8 @@ for (const migration of [
   "backend/migrations/002_auth.sql",
   "backend/migrations/003_seed_exercises.sql",
   "backend/migrations/004_session_idempotency_hash.sql",
-  "backend/migrations/005_movement_event_idempotency.sql"
+  "backend/migrations/005_movement_event_idempotency.sql",
+  "backend/migrations/006_movement_event_reps.sql"
 ]) {
   const sql = await readFile(migration, "utf8");
   if (/^\s*BEGIN;|\bCOMMIT;\s*$/im.test(sql)) {
