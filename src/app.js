@@ -1,5 +1,5 @@
 import { EXERCISES, SAMPLE_HISTORY, WORKOUT, createEmptySession, getExercise } from "./data.js";
-import { clearAuth, getCurrentUserId, hasApi, hasAuth, listCloudSessions, syncSession } from "./api.js";
+import { clearAuth, getCurrentUserId, hasApi, hasAuth, listCloudSessions, refreshAuth, syncSession } from "./api.js";
 import { renderAccount, wireAccount } from "./account.js";
 import { clearState, defaultState, exportState, loadState, persistState } from "./storage.js";
 import {
@@ -794,6 +794,20 @@ if ("serviceWorker" in navigator) {
 }
 
 render();
-window.addEventListener("online", () => { void flushSyncQueue(); });
+window.addEventListener("online", () => {
+  void (async () => {
+    if (!hasAuth()) await refreshAuth();
+    await flushSyncQueue();
+  })();
+});
 window.addEventListener("gym:auth-changed", () => { void flushSyncQueue(); });
-void flushSyncQueue();
+
+void (async () => {
+  if (!hasApi()) return;
+  const restored = await refreshAuth();
+  if (restored.ok) {
+    render();
+    window.dispatchEvent(new Event("gym:auth-changed"));
+  }
+  await flushSyncQueue();
+})();
