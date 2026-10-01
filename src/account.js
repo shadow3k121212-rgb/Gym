@@ -135,7 +135,7 @@ function announce(message) {
 }
 
 export function wireAccount({ render }) {
-  document.querySelectorAll("[data-account-action="sign-out"]").forEach((button) => button.addEventListener("click", async () => {
+  document.querySelectorAll('[data-account-action="sign-out"]').forEach((button) => button.addEventListener("click", async () => {
     button.disabled = true;
     const result = await logout();
     render();
@@ -143,7 +143,7 @@ export function wireAccount({ render }) {
     announce(result.ok ? "Signed out." : "Signed out locally. The server session may already be expired.");
   }));
 
-  document.querySelectorAll("[data-account-action="logout-all"]").forEach((button) => button.addEventListener("click", async () => {
+  document.querySelectorAll('[data-account-action="logout-all"]').forEach((button) => button.addEventListener("click", async () => {
     if (!window.confirm("Sign out every device currently connected to this account?")) return;
     button.disabled = true;
     const result = await logoutAll();
@@ -152,7 +152,7 @@ export function wireAccount({ render }) {
     announce(result.ok ? "All device sessions were signed out." : result.message);
   }));
 
-  document.querySelectorAll("[data-account-action="login"]").forEach((button) => button.addEventListener("click", async () => {
+  document.querySelectorAll('[data-account-action="login"]').forEach((button) => button.addEventListener("click", async () => {
     const email = document.querySelector("#auth-email")?.value.trim();
     const password = document.querySelector("#auth-password")?.value;
     if (!email || !password) return announce("Enter email and password.");
@@ -164,7 +164,7 @@ export function wireAccount({ render }) {
     if (result.ok) window.dispatchEvent(new Event("gym:auth-changed"));
   }));
 
-  document.querySelectorAll("[data-account-action="register"]").forEach((button) => button.addEventListener("click", async () => {
+  document.querySelectorAll('[data-account-action="register"]').forEach((button) => button.addEventListener("click", async () => {
     const email = document.querySelector("#auth-email")?.value.trim();
     const password = document.querySelector("#auth-password")?.value;
     if (!email || !password) return announce("Enter email and password.");
@@ -176,7 +176,7 @@ export function wireAccount({ render }) {
     if (result.ok) window.dispatchEvent(new Event("gym:auth-changed"));
   }));
 
-  document.querySelectorAll("[data-account-action="request-reset"]").forEach((button) => button.addEventListener("click", async () => {
+  document.querySelectorAll('[data-account-action="request-reset"]').forEach((button) => button.addEventListener("click", async () => {
     const email = document.querySelector("#reset-email")?.value.trim() || document.querySelector("#auth-email")?.value.trim();
     if (!email) return announce("Enter your account email.");
     button.disabled = true;
@@ -185,7 +185,7 @@ export function wireAccount({ render }) {
     announce(result.ok ? "If the account exists, recovery instructions will be sent." : result.message);
   }));
 
-  document.querySelectorAll("[data-account-action="confirm-reset"]").forEach((button) => button.addEventListener("click", async () => {
+  document.querySelectorAll('[data-account-action="confirm-reset"]').forEach((button) => button.addEventListener("click", async () => {
     const token = document.querySelector("#reset-token")?.value.trim();
     const password = document.querySelector("#reset-new-password")?.value;
     if (!token || !password) return announce("Enter the recovery token and new password.");
@@ -195,7 +195,7 @@ export function wireAccount({ render }) {
     announce(result.ok ? "Password reset. Sign in again on your devices." : result.message);
   }));
 
-  document.querySelectorAll("[data-account-action="delete-account"]").forEach((button) => button.addEventListener("click", async () => {
+  document.querySelectorAll('[data-account-action="delete-account"]').forEach((button) => button.addEventListener("click", async () => {
     const password = document.querySelector("#delete-account-password")?.value;
     if (!password) return announce("Enter your password to delete the cloud account.");
     if (!window.confirm("Permanently delete your cloud account and server-side training data? This cannot be undone.")) return;
