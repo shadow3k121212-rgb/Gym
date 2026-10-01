@@ -11,6 +11,24 @@ test("migrates old v1 history", () => {
   const state = loadState(makeStorage({"gym:state:v1":JSON.stringify({history:[{day:"Mon",volume:1000}]})}));
   assert.equal(state.schemaVersion, 2); assert.equal(state.history[0].volumeKg,1000); assert.equal(state.sampleData,false);
 });
+test("repairs malformed v2 state instead of trusting corrupted storage", () => {
+  const storage = makeStorage({"gym:state:v2": JSON.stringify({
+    schemaVersion: 2,
+    activeView: "not-a-view",
+    session: { id: "bad", exercises: "not-an-array" },
+    history: [{ id: "h1", volumeKg: "not-number" }, null],
+    syncQueue: [{ id: "q1", exercises: [] }, null],
+    settings: { units: "stones", displayName: "<script>" }
+  })});
+  const state = loadState(storage);
+  assert.equal(state.activeView, "dashboard");
+  assert.equal(state.session, null);
+  assert.equal(state.history.length, 1);
+  assert.equal(state.history[0].volumeKg, 0);
+  assert.deepEqual(state.syncQueue, []);
+  assert.equal(state.settings.units, "kg");
+});
+
 test("persists and exports without a browser", () => {
   const storage = makeStorage(); const state=defaultState(); state.settings.displayName="Test Athlete";
   assert.equal(persistState(state,storage),true); assert.ok(storage.getItem(STORAGE_KEY));
