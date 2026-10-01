@@ -1,5 +1,5 @@
 const SOURCES = new Set(["manual", "camera", "wearable"]);
-const UNITS = new Set(["kg", "lb"]);
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export class ValidationError extends Error {
   constructor(message) {
@@ -25,26 +25,33 @@ export function validatePassword(value) {
 }
 
 function isoDate(value, label) {
-  if (typeof value !== "string") throw new ValidationError(`${label} must be an ISO date-time.`);
+  if (typeof value !== "string") throw new ValidationError(label + " must be an ISO date-time.");
   const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp)) throw new ValidationError(`${label} must be an ISO date-time.`);
+  if (!Number.isFinite(timestamp)) throw new ValidationError(label + " must be an ISO date-time.");
   return new Date(timestamp).toISOString();
 }
 
 function numberInRange(value, min, max, label) {
   const next = Number(value);
   if (!Number.isFinite(next) || next < min || next > max) {
-    throw new ValidationError(`${label} is outside the allowed range.`);
+    throw new ValidationError(label + " is outside the allowed range.");
   }
   return next;
 }
 
+function uuid(value, label) {
+  if (typeof value !== "string" || !UUID_PATTERN.test(value)) {
+    throw new ValidationError(label + " must be a UUID.");
+  }
+  return value.toLowerCase();
+}
+
 export function validateSession(input) {
   if (!input || typeof input !== "object") throw new ValidationError("Session body is required.");
-  if (typeof input.id !== "string" || input.id.length < 8 || input.id.length > 80) {
-    throw new ValidationError("Session id is invalid.");
-  }
+  const id = uuid(input.id, "Session id");
   const startedAt = isoDate(input.startedAt, "startedAt");
+  const completedAt = input.completedAt == null ? null : isoDate(input.completedAt, "completedAt");
+
   if (!SOURCES.has(input.source)) throw new ValidationError("Unsupported session source.");
   if (input.name !== undefined && (typeof input.name !== "string" || input.name.length > 120)) {
     throw new ValidationError("Session name is invalid.");
@@ -54,7 +61,7 @@ export function validateSession(input) {
   }
 
   const exercises = input.exercises.map((exercise) => {
-    if (!exercise || typeof exercise.exerciseId !== "string" || exercise.exerciseId.length > 80) {
+    if (!exercise || typeof exercise.exerciseId !== "string" || exercise.exerciseId.length < 1 || exercise.exerciseId.length > 80) {
       throw new ValidationError("Exercise id is invalid.");
     }
     if (!Array.isArray(exercise.sets) || exercise.sets.length > 50) {
@@ -66,12 +73,20 @@ export function validateSession(input) {
         if (!set || Number(set.index) !== index + 1) {
           throw new ValidationError("Set indexes must be sequential.");
         }
+        const completed = Boolean(set.completed);
+        const completedAtForSet = set.completedAt ? isoDate(set.completedAt, "completedAt") : null;
+        if (completed && !completedAtForSet) {
+          throw new ValidationError("Completed sets must include completedAt.");
+        }
+        if (!completed && completedAtForSet) {
+          throw new ValidationError("Incomplete sets cannot include completedAt.");
+        }
         return {
           index: index + 1,
           reps: numberInRange(set.reps, 0, 1000, "Reps"),
           weightKg: numberInRange(set.weightKg, 0, 1000, "Load"),
-          completed: Boolean(set.completed),
-          completedAt: set.completedAt ? isoDate(set.completedAt, "completedAt") : null,
+          completed,
+          completedAt: completedAtForSet,
           rpe: set.rpe === null || set.rpe === undefined || set.rpe === "" ? null : numberInRange(set.rpe, 1, 10, "RPE")
         };
       })
@@ -79,8 +94,9 @@ export function validateSession(input) {
   });
 
   return {
-    id: input.id,
+    id,
     startedAt,
+    completedAt,
     source: input.source,
     name: typeof input.name === "string" ? input.name.slice(0, 120) : "Workout",
     exercises
@@ -89,9 +105,7 @@ export function validateSession(input) {
 
 export function validateMovementEvent(input) {
   if (!input || typeof input !== "object") throw new ValidationError("Movement event is required.");
-  if (typeof input.sessionId !== "string" || input.sessionId.length < 8 || input.sessionId.length > 80) {
-    throw new ValidationError("sessionId is invalid.");
-  }
+  const sessionId = uuid(input.sessionId, "sessionId");
   if (typeof input.exerciseId !== "string" || input.exerciseId.length < 1 || input.exerciseId.length > 80) {
     throw new ValidationError("exerciseId is invalid.");
   }
@@ -100,21 +114,22 @@ export function validateMovementEvent(input) {
   }
   if (!SOURCES.has(input.source)) throw new ValidationError("Unsupported movement source.");
   const timestamp = isoDate(input.timestamp, "timestamp");
-  numberInRange(input.reps, 0, 1000, "Reps");
+  const reps = numberInRange(input.reps, 0, 1000, "Reps");
   if (input.confidence !== null && input.confidence !== undefined) numberInRange(input.confidence, 0, 1, "Confidence");
   if (input.model !== null && input.model !== undefined && typeof input.model !== "string") {
     throw new ValidationError("Model must be a string.");
   }
+  if (input.model && input.model.length > 120) throw new ValidationError("Model is too long.");
   if (input.metrics !== undefined && (!input.metrics || typeof input.metrics !== "object" || Array.isArray(input.metrics))) {
     throw new ValidationError("Metrics must be an object.");
   }
   return {
-    sessionId: input.sessionId,
+    sessionId,
     exerciseId: input.exerciseId,
     schemaVersion: input.schemaVersion,
     source: input.source,
     timestamp,
-    reps: Number(input.reps),
+    reps,
     confidence: input.confidence === undefined ? null : input.confidence,
     model: input.model === undefined ? null : input.model,
     metrics: input.metrics || {}
