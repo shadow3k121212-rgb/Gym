@@ -127,16 +127,16 @@ export class PostgresRepository {
       await client.query("begin");
       const inserted = await client.query(
         `insert into movement_events
-          (id,session_id,exercise_id,schema_version,source,occurred_at,confidence,model,metrics_json,idempotency_key,idempotency_request_hash)
+          (id,session_id,exercise_id,schema_version,source,occurred_at,reps,confidence,model,metrics_json,idempotency_key,idempotency_request_hash)
          select $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11
          where exists (select 1 from workout_sessions where id=$2 and user_id=$12)
          on conflict (session_id,idempotency_key) do nothing
-         returning id,session_id,exercise_id,schema_version,source,occurred_at,confidence,model,metrics_json,idempotency_key,idempotency_request_hash`,
-        [randomUUID(),event.sessionId,event.exerciseId,event.schemaVersion,event.source,event.timestamp,event.confidence,event.model,event.metrics,idempotencyKey,requestHash,userId]
+         returning id,session_id,exercise_id,schema_version,source,occurred_at,reps,confidence,model,metrics_json,idempotency_key,idempotency_request_hash`,
+        [randomUUID(),event.sessionId,event.exerciseId,event.schemaVersion,event.source,event.timestamp,event.reps,event.confidence,event.model,event.metrics,idempotencyKey,requestHash,userId]
       );
       if (!inserted.rowCount) {
         const existing = await client.query(
-          `select id,session_id,exercise_id,schema_version,source,occurred_at,confidence,model,metrics_json,idempotency_key,idempotency_request_hash
+          `select id,session_id,exercise_id,schema_version,source,occurred_at,reps,confidence,model,metrics_json,idempotency_key,idempotency_request_hash
            from movement_events
            where session_id=$1 and idempotency_key=$2
            for update`,
