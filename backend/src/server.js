@@ -24,13 +24,15 @@ function send(res, statusCode, body, headers = {}) {
     "x-content-type-options": "nosniff",
     "referrer-policy": "no-referrer",
     "x-frame-options": "DENY",
+    ...(process.env.NODE_ENV === "production" ? { "strict-transport-security": "max-age=31536000; includeSubDomains" } : {}),
     ...headers
   });
   res.end(JSON.stringify(body));
 }
 
 function requestId(req) {
-  return req.headers["x-request-id"] || randomUUID();
+  const candidate = req.headers["x-request-id"];
+  return typeof candidate === "string" && /^[A-Za-z0-9._:-]{1,100}$/.test(candidate) ? candidate : randomUUID();
 }
 
 function authLimit(map, key, now = Date.now()) {
@@ -156,6 +158,8 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
     } catch (error) {
       if (error instanceof ValidationError) return okError(res, 400, error.message, id);
       if (error?.code === "23505") return okError(res, 409, "Resource already exists.", id);
+      if (error?.code === "23503") return okError(res, 400, "Referenced resource does not exist.", id);
+      if (error?.code === "IDEMPOTENCY_CONFLICT") return okError(res, 409, error.message, id);
       if (error?.code === "DUPLICATE_EMAIL") return okError(res, 409, "Email already registered.", id);
       if (error?.code === "NOT_FOUND") return okError(res, 404, error.message, id);
       const status = Number.isInteger(error?.statusCode) ? error.statusCode : 500;
