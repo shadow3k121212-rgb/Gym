@@ -67,3 +67,37 @@ test("does not silently truncate durable history or sync queue", () => {
   assert.equal(state.history.length, 120);
   assert.equal(state.syncQueue.length, 25);
 });
+test("persists sync ownership while preserving legacy unowned entries", () => {
+  const owner = "123e4567-e89b-12d3-a456-426614174000";
+  const storage = makeStorage({"gym:state:v2": JSON.stringify({
+    schemaVersion: 2,
+    activeView: "dashboard",
+    session: null,
+    history: [],
+    syncQueue: [
+      { userId:owner, session: {
+        id: "123e4567-e89b-12d3-a456-426614174001",
+        startedAt: "2026-10-01T10:00:00.000Z",
+        completedAt: null,
+        name: "Owned",
+        source: "manual",
+        exercises: [{ exerciseId:"bench", sets:[{ index:1, reps:8, weightKg:70, completed:false, completedAt:null, rpe:null }] }]
+      } },
+      {
+        id: "123e4567-e89b-12d3-a456-426614174002",
+        startedAt: "2026-10-01T11:00:00.000Z",
+        completedAt: null,
+        name: "Legacy",
+        source: "manual",
+        exercises: [{ exerciseId:"bench", sets:[{ index:1, reps:8, weightKg:70, completed:false, completedAt:null, rpe:null }] }]
+      }
+    ],
+    settings: { units:"kg", displayName:"Athlete" }
+  })});
+  const state = loadState(storage);
+  assert.equal(state.syncQueue.length, 2);
+  assert.equal(state.syncQueue[0].userId, owner);
+  assert.equal(state.syncQueue[0].session.id, "123e4567-e89b-12d3-a456-426614174001");
+  assert.equal(state.syncQueue[1].userId, null);
+  assert.equal(state.syncQueue[1].session.id, "123e4567-e89b-12d3-a456-426614174002");
+});
