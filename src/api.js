@@ -141,15 +141,14 @@ export function revokeAuthSession(sessionId) {
   return request("/v1/auth/sessions/" + encodeURIComponent(sessionId), { method:"DELETE" });
 }
 
-export function deleteAccount(password) {
-  if (!apiBaseUrl || !hasAuth()) return Promise.resolve({ ok:false, message:"Cloud account is not connected." });
-  return request("/v1/auth/delete-account", {
+export async function deleteAccount(password) {
+  if (!apiBaseUrl || !hasAuth()) return { ok:false, message:"Cloud account is not connected." };
+  const result = await request("/v1/auth/delete-account", {
     method:"POST",
     body:JSON.stringify({ password })
-  }, false).then((result) => {
-    if (result.ok) clearAuth();
-    return result;
-  });
+  }, false);
+  if (result.ok || result.authRequired) clearAuth();
+  return result;
 }
 
 export function requestPasswordReset(email) {
@@ -160,12 +159,14 @@ export function requestPasswordReset(email) {
   }, false);
 }
 
-export function confirmPasswordReset(token, password) {
-  if (!apiBaseUrl) return Promise.resolve({ ok:false, message:"Cloud API is not configured." });
-  return rawRequest("/v1/auth/password-reset/confirm", {
+export async function confirmPasswordReset(token, password) {
+  if (!apiBaseUrl) return { ok:false, message:"Cloud API is not configured." };
+  const result = await rawRequest("/v1/auth/password-reset/confirm", {
     method:"POST",
     body:JSON.stringify({ token, password })
   }, false);
+  if (result.ok) clearAuth();
+  return result;
 }
 
 export async function syncSession(session) {
