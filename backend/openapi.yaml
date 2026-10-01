@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: GYM Training API
-  version: 0.2.0
+  version: 0.2.1
   description: Authenticated sync API for the GYM local-first training product.
 servers:
   - url: https://api.example.invalid
@@ -10,8 +10,7 @@ paths:
     get:
       operationId: health
       responses:
-        "200":
-          description: Service health
+        "200": { description: Service health }
   /v1/auth/register:
     post:
       operationId: register
@@ -73,9 +72,9 @@ paths:
             schema: { $ref: "#/components/schemas/SessionCreate" }
       responses:
         "201": { description: Session persisted }
-        "200": { description: Idempotent replay }
-        "400": { description: Invalid request }
-        "409": { description: Conflicting resource }
+        "200": { description: Idempotent replay of the same request }
+        "400": { description: Invalid request or missing referenced data }
+        "409": { description: Idempotency key conflict or other resource conflict }
     get:
       security: [{ bearerAuth: [] }]
       operationId: listSessions
@@ -98,6 +97,7 @@ paths:
       responses:
         "201": { description: Event accepted }
         "404": { description: User does not own the session }
+        "400": { description: Invalid request or referenced exercise }
 
 components:
   securitySchemes:
@@ -109,8 +109,9 @@ components:
       type: object
       required: [id, startedAt, source, exercises]
       properties:
-        id: { type: string }
+        id: { type: string, format: uuid }
         startedAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time, nullable: true }
         source: { type: string, enum: [manual, camera, wearable] }
         name: { type: string, maxLength: 120 }
         exercises:
@@ -141,11 +142,11 @@ components:
       required: [schemaVersion, sessionId, exerciseId, timestamp, source, reps]
       properties:
         schemaVersion: { type: integer, minimum: 1 }
-        sessionId: { type: string }
+        sessionId: { type: string, format: uuid }
         exerciseId: { type: string }
         timestamp: { type: string, format: date-time }
         source: { type: string, enum: [manual, camera, wearable] }
         reps: { type: number, minimum: 0, maximum: 1000 }
         confidence: { type: number, minimum: 0, maximum: 1, nullable: true }
-        model: { type: string, nullable: true }
+        model: { type: string, maxLength: 120, nullable: true }
         metrics: { type: object, additionalProperties: true }
