@@ -128,6 +128,20 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
   async function handler(req, res) {
     const id = requestId(req);
     const origin = req.headers.origin;
+    const started = Date.now();
+    res.once("finish", () => {
+      const status = res.statusCode;
+      const level = status >= 500 ? "error" : status >= 400 ? "warn" : "info";
+      console[level](JSON.stringify({
+        level,
+        type:"http_request",
+        requestId:id,
+        method:req.method,
+        path:new URL(req.url, "http://gym.local").pathname,
+        status,
+        durationMs:Date.now() - started
+      }));
+    });
     const cors = {
       "access-control-allow-origin": corsOrigin === "*" ? "*" : origin === corsOrigin ? corsOrigin : "",
       "vary": "Origin",
@@ -138,7 +152,6 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
     if (req.method === "OPTIONS") return send(res, 204, {}, { ...cors, "x-request-id": id });
 
     const path = new URL(req.url, "http://gym.local").pathname;
-    const started = Date.now();
 
     try {
       if (path === "/v1/health" && req.method === "GET") {
@@ -230,7 +243,8 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
                   email:resetUser.email,
                   resetToken,
                   requestId:id
-                })
+                }),
+                signal:AbortSignal.timeout(5000)
               });
               if (!delivery.ok) console.warn(JSON.stringify({level:"warn",requestId:id,message:"Password reset delivery failed.",status:delivery.status}));
             } catch (error) {
