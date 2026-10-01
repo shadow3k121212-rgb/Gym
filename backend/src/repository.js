@@ -48,6 +48,116 @@ export class PostgresRepository {
     return result.rows[0] ?? null;
   }
 
+  async createAuthSession({ id, familyId, userId, tokenHash, expiresAt }) {
+    const result = await this.pool.query(
+      `insert into auth_sessions (id,family_id,user_id,token_hash,expires_at)
+       values ($1,$2,$3,$4,$5)
+       returning id,family_id,user_id,created_at,expires_at,last_seen_at,revoked_at,replaced_by_session_id,revocation_reason`,
+      [id,familyId,userId,tokenHash,expiresAt]
+    );
+    return result.rows[0];
+  }
+
+  async getAuthSession(sessionId, userId) {
+    const result = await this.pool.query(
+      `select id,family_id,user_id,created_at,expires_at,last_seen_at,revoked_at,replaced_by_session_id,revocation_reason
+       from auth_sessions where id=$1 and user_id=$2 limit 1`,
+      [sessionId,userId]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async rotateAuthSession(tokenHash, replacement) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("begin");
+      const current = await client.query(
+        `select id,family_id,user_id,expires_at,revoked_at
+         from auth_sessions
+         where token_hash=$1
+         for update`,
+        [tokenHash]
+      );
+      if (!current.rowCount) {
+        await client.query("rollback");
+        return { status:"invalid" };
+      }
+
+      const row = current.rows[0];
+      if (row.revoked_at) {
+        await client.query(
+          "update auth_sessions set revoked_at=coalesce(revoked_at,now()), revocation_reason=coalesce(revocation_reason,'refresh-token-reuse') where family_id=$1 and revoked_at is null",
+          [row.family_id]
+        );
+        await client.query("commit");
+        return { status:"reused" };
+      }
+
+      if (new Date(row.expires_at).getTime() <= Date.now()) {
+        await client.query(
+          "update auth_sessions set revoked_at=now(), revocation_reason='expired' where id=$1 and revoked_at is null",
+          [row.id]
+        );
+        await client.query("commit");
+        return { status:"expired" };
+      }
+
+      await client.query(
+        `insert into auth_sessions (id,family_id,user_id,token_hash,expires_at)
+         values ($1,$2,$3,$4,$5)`,
+        [replacement.id,row.family_id,row.user_id,replacement.tokenHash,replacement.expiresAt]
+      );
+      await client.query(
+        "update auth_sessions set revoked_at=now(),last_seen_at=now(),replaced_by_session_id=$1,revocation_reason='rotated' where id=$2",
+        [replacement.id,row.id]
+      );
+      await client.query("commit");
+      return { status:"rotated", userId:row.user_id, familyId:row.family_id, sessionId:replacement.id };
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async revokeAuthSessionByTokenHash(tokenHash, reason = "logout") {
+    const result = await this.pool.query(
+      "update auth_sessions set revoked_at=coalesce(revoked_at,now()), revocation_reason=coalesce(revocation_reason,$2) where token_hash=$1 returning id,user_id",
+      [tokenHash,reason]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async revokeAuthSession(userId, sessionId, reason = "user-revoked") {
+    const result = await this.pool.query(
+      "update auth_sessions set revoked_at=coalesce(revoked_at,now()), revocation_reason=coalesce(revocation_reason,$3) where id=$1 and user_id=$2 returning id,user_id",
+      [sessionId,userId,reason]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async revokeAllAuthSessions(userId, exceptSessionId = null, reason = "logout-all") {
+    const params = [userId,reason];
+    const condition = exceptSessionId ? "and id <> $3" : "";
+    if (exceptSessionId) params.push(exceptSessionId);
+    const result = await this.pool.query(
+      `update auth_sessions set revoked_at=coalesce(revoked_at,now()), revocation_reason=coalesce(revocation_reason,$2)
+       where user_id=$1 and revoked_at is null ${condition}`,
+      params
+    );
+    return result.rowCount;
+  }
+
+  async listAuthSessions(userId) {
+    const result = await this.pool.query(
+      `select id,created_at,expires_at,last_seen_at,revoked_at,revocation_reason
+       from auth_sessions where user_id=$1 order by created_at desc`,
+      [userId]
+    );
+    return result.rows;
+  }
+
   async createSession(userId, input, idempotencyKey) {
     const client = await this.pool.connect();
     const requestHash = idempotencyHash(input);
