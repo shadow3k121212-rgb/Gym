@@ -2,11 +2,16 @@
 
 ## Current foundation
 
-- `src/app.js`: lightweight client-side view rendering and interactions.
+- `src/app.js`: stateful workout UI, set-level logging, history, progress, account surface and sync outbox.
 - `src/workout-engine.js`: deterministic domain calculations, progression helper, and versioned movement event.
-- `localStorage`: prototype persistence only; not suitable for sensitive data or cross-device sync.
+- `src/units.js`: canonical kg storage with explicit kg/lb display/input conversion.
+- `localStorage`: local beta persistence only; not a secure vault and not cross-device storage.
 - `src/sw.js`: basic offline cache.
+- `backend/src/server.js`: authenticated HTTP API with validation, rate limiting, authorization, idempotency and request metadata.
+- `backend/src/repository.js`: PostgreSQL persistence with transaction-scoped session writes.
+- `backend/migrations/`: versioned database schema and seed data.
 - `scripts/`: zero-dependency dev server, static build, and checks.
+- `.github/workflows/ci.yml`: unit/API/smoke/static/build pipeline.
 
 ## Target production boundaries
 
@@ -42,12 +47,12 @@ Do **not** upload raw video by default. Prefer on-device inference and store onl
 
 ## Production decisions still required
 
-1. Identity, account recovery, and authorization model.
-2. Database schema, migrations, backups, and deletion workflows.
-3. API validation, rate limits, idempotency, and audit logging.
+1. Production identity lifecycle: verification, recovery, revocation and secure refresh/session strategy.
+2. Managed deployment, database backups, restore drills, retention and deletion workflows.
+3. Distributed edge abuse controls and production observability.
 4. Model evaluation datasets, exercise-specific thresholds, device coverage, and failure UX.
 5. Privacy policy, terms, consent records, data export/deletion, and applicable legal review.
-6. Observability, incident response, support workflow, and release rollback.
+6. Operational runbooks, incident response, support workflow, and release rollback.
 
 ## Security baseline
 
