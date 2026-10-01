@@ -17,7 +17,7 @@ async function request(base, path, options={}) {
     ...options,
     headers: { "content-type":"application/json", ...(options.headers || {}) }
   });
-  return { status:response.status, body:await response.json() };
+  return { status:response.status, body:await response.json(), headers:response.headers };
 }
 
 test("registers, authenticates, and reads the current user", async (t) => {
@@ -43,6 +43,9 @@ test("exposes liveness and readiness separately", async (t) => {
   const ready = await request(testServer.base, "/v1/ready");
   assert.equal(health.status, 200);
   assert.equal(health.body.ok, true);
+  assert.ok(health.headers.get("x-request-id"));
+  assert.equal(health.headers.get("x-frame-options"), "DENY");
+  assert.equal(health.headers.get("x-content-type-options"), "nosniff");
   assert.equal(ready.status, 200);
   assert.equal(ready.body.ready, true);
 });
@@ -167,13 +170,44 @@ test("requires timestamps to match set completion state", async (t) => {
   assert.equal(response.status,400);
 });
 
-test("blocks movement events for another user’s session", async (t) => {
+test("makes movement-event writes idempotent and rejects payload conflicts", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST", body:JSON.stringify({email:"movement@example.com",password:"correct horse battery staple"})
+  });
+  const token=registered.body.accessToken;
+  const session={id:"123e4567-e89b-12d3-a456-426614174005",startedAt:"2026-10-01T15:00:00Z",source:"manual",name:"Movement",exercises:[]};
+  await request(testServer.base,"/v1/sessions",{
+    method:"POST",headers:{authorization:`Bearer ${token}`,"idempotency-key":"movement-session-123456"},
+    body:JSON.stringify(session)
+  });
+  const event={schemaVersion:1,sessionId:session.id,exerciseId:"bench",timestamp:"2026-10-01T15:01:00Z",source:"camera",reps:8,confidence:.92,model:"pose-v0",metrics:{rom:.81}};
+  const first=await request(testServer.base,"/v1/movement-events",{
+    method:"POST",headers:{authorization:`Bearer ${token}`,"idempotency-key":"movement-event-123456"},
+    body:JSON.stringify(event)
+  });
+  const second=await request(testServer.base,"/v1/movement-events",{
+    method:"POST",headers:{authorization:`Bearer ${token}`,"idempotency-key":"movement-event-123456"},
+    body:JSON.stringify(event)
+  });
+  const changed=await request(testServer.base,"/v1/movement-events",{
+    method:"POST",headers:{authorization:`Bearer ${token}`,"idempotency-key":"movement-event-123456"},
+    body:JSON.stringify({...event,reps:9})
+  });
+  assert.equal(first.status,201);
+  assert.equal(second.status,200);
+  assert.equal(second.body.event.id,first.body.event.id);
+  assert.equal(changed.status,409);
+});
+
+test("blocks movement events for another user’s session", async (t) =>
   const testServer = await makeServer();
   t.after(() => testServer.server.close());
   const a=await request(testServer.base,"/v1/auth/register",{method:"POST",body:JSON.stringify({email:"a@example.com",password:"correct horse battery staple"})});
   const b=await request(testServer.base,"/v1/auth/register",{method:"POST",body:JSON.stringify({email:"b@example.com",password:"correct horse battery staple"})});
   const session={id:"123e4567-e89b-12d3-a456-426614174001",startedAt:"2026-10-01T12:00:00Z",source:"manual",name:"Test",exercises:[]};
   await request(testServer.base,"/v1/sessions",{method:"POST",headers:{authorization:`Bearer ${a.body.accessToken}`,"idempotency-key":"session-write-abcdef"},body:JSON.stringify(session)});
-  const response=await request(testServer.base,"/v1/movement-events",{method:"POST",headers:{authorization:`Bearer ${b.body.accessToken}`},body:JSON.stringify({schemaVersion:1,sessionId:session.id,exerciseId:"bench",timestamp:"2026-10-01T12:00:00Z",source:"camera",reps:8,confidence:.92,model:"pose-v0",metrics:{rom:.81}})});
+  const response=await request(testServer.base,"/v1/movement-events",{method:"POST",headers:{authorization:`Bearer ${b.body.accessToken}`,"idempotency-key":"movement-owner-123456"},body:JSON.stringify({schemaVersion:1,sessionId:session.id,exerciseId:"bench",timestamp:"2026-10-01T12:00:00Z",source:"camera",reps:8,confidence:.92,model:"pose-v0",metrics:{rom:.81}})});
   assert.equal(response.status,404);
 });
