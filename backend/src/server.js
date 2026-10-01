@@ -32,42 +32,32 @@ function requestId(req) {
   return req.headers["x-request-id"] || randomUUID();
 }
 
-function createRateLimiter() {
-  const buckets = new Map();
-  return {
-    allow(key, now = Date.now()) {
-      const current = buckets.get(key);
-      if (!current || now >= current.resetAt) return { allowed:true };
-      if (current.failures < 5) return { allowed:true };
-      return { allowed:false, retryAfter:Math.ceil((current.resetAt - now) / 1000) };
-    },
-    fail(key, now = Date.now()) {
-      const current = buckets.get(key);
-      if (!current || now >= current.resetAt) {
-        buckets.set(key, { failures:1, resetAt:now + 15 * 60 * 1000 });
-        return;
-      }
-      current.failures += 1;
-    },
-    clear(key) {
-      buckets.delete(key);
-    }
-  };
+function authLimit(map, key, now = Date.now()) {
+  const item = map.get(key);
+  if (!item || now >= item.resetAt) return { allowed: true };
+  return item.failures >= 5
+    ? { allowed: false, retryAfter: Math.ceil((item.resetAt - now) / 1000) }
+    : { allowed: true };
+}
+
+function authFailure(map, key, now = Date.now()) {
+  const item = map.get(key);
+  if (!item || now >= item.resetAt) {
+    map.set(key, { failures: 1, resetAt: now + 15 * 60 * 1000 });
+    return;
+  }
+  item.failures += 1;
 }
 
 function okError(res, status, message, requestIdValue, details = undefined) {
   send(res, status, { error: { message, requestId: requestIdValue, ...(details ? { details } : {}) } }, { "x-request-id": requestIdValue });
 }
 
-function rateKey(req) {
-  return req.socket.remoteAddress || "unknown";
-}
-
 export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
   if (!repo) throw new Error("Repository is required.");
   if (!jwtSecret || jwtSecret.length < 32) throw new Error("JWT secret must be at least 32 characters.");
 
-  const authAttempts = new Map();
+  const authFailures = new Map();
 
   function authUser(req) {
     const token = extractBearerToken(req);
@@ -95,11 +85,16 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
         return send(res, 200, { ok: true, service: "gym-api", database, requestId: id }, cors);
       }
 
+      if (path === "/v1/ready" && req.method === "GET") {
+        const database = await repo.health();
+        return send(res, database ? 200 : 503, { ready: database, service: "gym-api", requestId: id }, cors);
+      }
+
       if (path === "/v1/auth/register" && req.method === "POST") {
         const body = await readJson(req);
         const email = normalizeEmail(body.email);
         const password = validatePassword(body.password);
-        if (authAttempts.size > 1000) authAttempts.clear();
+        
         const existing = await repo.getUserByEmail(email);
         if (existing) return okError(res, 409, "Email already registered.", id);
         const credentials = await hashPassword(password);
@@ -110,7 +105,7 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
 
       if (path === "/v1/auth/login" && req.method === "POST") {
         const key = req.socket.remoteAddress || "unknown";
-        const limit = authFailures.allow(key);
+        const limit = authLimit(authFailures, key);
         if (!limit.allowed) return okError(res, 429, "Too many failed login attempts. Try again later.", id, { retryAfter: limit.retryAfter });
         const body = await readJson(req);
         const email = normalizeEmail(body.email);
@@ -118,10 +113,10 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
         const user = await repo.getUserByEmail(email);
         const valid = user?.status === "active" && user?.password_hash && await verifyPassword(password, user.password_salt, user.password_hash);
         if (!valid) {
-          authFailures.fail(key);
+          authFailure(authFailures, key);
           return okError(res, 401, "Invalid email or password.", id);
         }
-        authFailures.clear(key);
+        authFailures.delete(key);
         const token = issueAccessToken(user.id, jwtSecret);
         return send(res, 200, { user:{ id:user.id, email:user.email }, accessToken:token }, { ...cors, "x-request-id":id });
       }
@@ -130,11 +125,6 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
       if (!auth) return okError(res, 401, "Authentication required.", id);
       const user = await repo.getUserById(auth.userId);
       if (!user || user.status !== "active") return okError(res, 401, "Account is not active.", id);
-
-      if (path === "/v1/ready" && req.method === "GET") {
-        const database = await repo.health();
-        return send(res, database ? 200 : 503, { ready:database, service:"gym-api", requestId:id }, { ...cors, "x-request-id":id });
-      }
 
       if (path === "/v1/me" && req.method === "GET") {
         return send(res, 200, { user:{ id:user.id, email:user.email, createdAt:user.created_at } }, { ...cors, "x-request-id":id });
@@ -169,9 +159,6 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
       const status = Number.isInteger(error?.statusCode) ? error.statusCode : 500;
       console.error(JSON.stringify({ level:"error", requestId:id, durationMs:Date.now()-started, method:req.method, path, message:error?.message }));
       return okError(res, status, status === 500 ? "Internal server error." : error.message, id);
-    } finally {
-      const ip = rateKey(req);
-      authAttempts.set(ip, Date.now());
     }
   }
 
