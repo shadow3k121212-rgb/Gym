@@ -48,6 +48,95 @@ export class PostgresRepository {
     return result.rows[0] ?? null;
   }
 
+  async createPasswordResetToken({ id, userId, tokenHash, expiresAt }) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("begin");
+      await client.query(
+        "update password_reset_tokens set used_at=now() where user_id=$1 and used_at is null",
+        [userId]
+      );
+      const result = await client.query(
+        `insert into password_reset_tokens (id,user_id,token_hash,expires_at)
+         values ($1,$2,$3,$4)
+         returning id,user_id,created_at,expires_at`,
+        [id,userId,tokenHash,expiresAt]
+      );
+      await client.query("commit");
+      return result.rows[0];
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async resetPassword(tokenHash, passwordHash, passwordSalt) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("begin");
+      const token = await client.query(
+        `update password_reset_tokens
+         set used_at=now()
+         where token_hash=$1 and used_at is null and expires_at > now()
+         returning id,user_id`,
+        [tokenHash]
+      );
+      if (!token.rowCount) {
+        await client.query("rollback");
+        return null;
+      }
+      const userId = token.rows[0].user_id;
+      const user = await client.query(
+        "update users set password_hash=$1,password_salt=$2,updated_at=now() where id=$3 and status='active' returning id,email,status",
+        [passwordHash,passwordSalt,userId]
+      );
+      if (!user.rowCount) {
+        await client.query("rollback");
+        return null;
+      }
+      await client.query(
+        "update auth_sessions set revoked_at=coalesce(revoked_at,now()), revocation_reason=coalesce(revocation_reason,'password-reset') where user_id=$1 and revoked_at is null",
+        [userId]
+      );
+      await client.query("commit");
+      return user.rows[0];
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async deleteAccount(userId) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("begin");
+      const deleted = await client.query(
+        "delete from users where id=$1 returning id",
+        [userId]
+      );
+      if (!deleted.rowCount) {
+        await client.query("rollback");
+        return false;
+      }
+      const digest = createHash("sha256").update(userId).digest("hex");
+      await client.query(
+        "insert into account_deletion_audit (id,event_type,subject_digest) values ($1,'account-deleted',$2)",
+        [randomUUID(),digest]
+      );
+      await client.query("commit");
+      return true;
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async createAuthSession({ id, familyId, userId, tokenHash, expiresAt }) {
     const result = await this.pool.query(
       `insert into auth_sessions (id,family_id,user_id,token_hash,expires_at)
