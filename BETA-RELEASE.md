@@ -2,7 +2,7 @@
 
 ## Release positioning
 
-GYM is a **local-first workout logging beta**. Do not advertise cloud sync, AI coaching, computer-vision form checks, or medical outcomes until those features exist and have passed validation.
+GYM is a **local-first workout logging beta with an optional authenticated API foundation**. Cloud sync is opt-in and only available when a deployment configures the API; AI coaching and computer-vision form checks are roadmap capabilities, not current product promises.
 
 ## Before sharing the URL
 
@@ -19,7 +19,9 @@ GYM is a **local-first workout logging beta**. Do not advertise cloud sync, AI c
 
 ## Data transparency
 
-The prototype stores its state in browser localStorage. It is not account-backed, not synced across devices, and may be removed by browser storage controls. The export function downloads the locally stored app state. Do not enter information you would not want stored on this device.
+Workout state is stored locally in browser localStorage. The beta can optionally sync completed sessions to a configured authenticated API, but local data remains the immediate client-side source of truth and may be removed by browser storage controls. The export function downloads locally stored app state. Do not enter information you would not want stored on this device.
+
+The API foundation currently stores account and workout/session data in PostgreSQL. Production privacy, retention, deletion, recovery, and camera-data policies must be completed before collecting sensitive or camera-derived data.
 
 ## Launch blocker policy
 
