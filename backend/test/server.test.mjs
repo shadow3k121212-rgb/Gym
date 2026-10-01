@@ -235,3 +235,65 @@ test("blocks movement events for another user’s session", async (t) => {
   const response=await request(testServer.base,"/v1/movement-events",{method:"POST",headers:{authorization:`Bearer ${b.body.accessToken}`,"idempotency-key":"movement-owner-123456"},body:JSON.stringify({schemaVersion:1,sessionId:session.id,exerciseId:"bench",timestamp:"2026-10-01T12:00:00Z",source:"camera",reps:8,confidence:.92,model:"pose-v0",metrics:{rom:.81}})});
   assert.equal(response.status,404);
 });
+test("paginates session history with a stable cursor", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST", body:JSON.stringify({email:"pagination@example.com",password:"correct horse battery staple"})
+  });
+  const token = registered.body.accessToken;
+
+  for (let i = 0; i < 55; i += 1) {
+    await request(testServer.base, "/v1/sessions", {
+      method:"POST",
+      headers:{
+        authorization:`Bearer ${token}`,
+        "idempotency-key":`pagination-write-${String(i).padStart(4,"0")}`
+      },
+      body:JSON.stringify({
+        id:`123e4567-e89b-12d3-a456-${String(426614174100 + i)}`,
+        startedAt:`2026-10-01T10:${String(i).padStart(2,"0")}:00.000Z`,
+        source:"manual",
+        name:"Page " + i,
+        exercises:[]
+      })
+    });
+  }
+
+  const first = await request(testServer.base, "/v1/sessions?limit=50", {
+    headers:{authorization:`Bearer ${token}`}
+  });
+  assert.equal(first.status, 200);
+  assert.equal(first.body.sessions.length, 50);
+  assert.equal(typeof first.body.nextCursor, "string");
+
+  const second = await request(
+    testServer.base,
+    "/v1/sessions?limit=50&before=" + encodeURIComponent(first.body.nextCursor),
+    { headers:{authorization:`Bearer ${token}`} }
+  );
+  assert.equal(second.status, 200);
+  assert.equal(second.body.sessions.length, 5);
+  assert.equal(second.body.nextCursor, null);
+
+  const firstIds = new Set(first.body.sessions.map((s) => s.id));
+  assert.ok(second.body.sessions.every((s) => !firstIds.has(s.id)));
+});
+
+test("rejects malformed pagination cursors and limits", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST", body:JSON.stringify({email:"badcursor@example.com",password:"correct horse battery staple"})
+  });
+  const token = registered.body.accessToken;
+
+  const badCursor = await request(testServer.base, "/v1/sessions?limit=20&before=not-a-real-cursor", {
+    headers:{authorization:`Bearer ${token}`}
+  });
+  const badLimit = await request(testServer.base, "/v1/sessions?limit=0", {
+    headers:{authorization:`Bearer ${token}`}
+  });
+  assert.equal(badCursor.status, 400);
+  assert.equal(badLimit.status, 400);
+});
