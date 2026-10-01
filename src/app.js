@@ -31,6 +31,16 @@ function save() {
   return persistState(state);
 }
 
+async function flushSyncQueue() {
+  if (!hasApi() || !hasAuth() || !state.syncQueue?.length) return;
+  for (const session of [...state.syncQueue]) {
+    const result = await syncSession(session);
+    if (!result.ok) break;
+    state.syncQueue = state.syncQueue.filter((item) => item.id !== session.id);
+    save();
+  }
+}
+
 function todayLabel() {
   return new Intl.DateTimeFormat("en-IN", { weekday: "long", day: "numeric", month: "short" }).format(new Date());
 }
@@ -98,6 +108,7 @@ function startSession() {
   state.activeView = "workout";
   save();
   render();
+void flushSyncQueue();
 }
 
 async function finishSession() {
@@ -173,7 +184,6 @@ function startRestTimer() {
     if (restRemaining <= 0) stopRestTimer();
     updateRestUI();
   }, 1000);
-  wireAccount({ render, announce });
   updateRestUI();
 }
 
@@ -580,7 +590,9 @@ function wire() {
     render();
   }));
 
-  $$("[data-action='clear-data']").forEach((button) => button.addEventListener("click", () => {
+  wireAccount({ render, announce });
+
+  $("[data-action='clear-data']").forEach((button) => button.addEventListener("click", () => {
     const confirmed = window.confirm("Delete all local GYM data from this browser?");
     if (!confirmed) return;
     clearState();
