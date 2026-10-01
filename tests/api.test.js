@@ -36,6 +36,7 @@ test("marks HTTP 401 responses as authentication-required", async () => {
 
   try {
     const module = await import("../src/api.js?auth-test=" + Date.now());
+    module.setAuthSession("expired-token", "123e4567-e89b-12d3-a456-426614174000");
     const result = await module.listCloudSessions(50);
     assert.equal(result.ok, false);
     assert.equal(result.status, 401);
@@ -67,6 +68,7 @@ test("passes the opaque cursor through cloud history pagination", async () => {
 
   try {
     const module = await import("../src/api.js?pagination-test=" + Date.now());
+    module.setAuthSession("token", "123e4567-e89b-12d3-a456-426614174000");
     const result = await module.listCloudSessions(100, "opaque.cursor");
     assert.equal(result.ok, true);
     assert.match(requestedUrl, /limit=100/);
@@ -92,6 +94,7 @@ test("treats a successful HTTP response without the synced session as malformed"
 
   try {
     const module = await import("../src/api.js?malformed-sync=" + Date.now());
+    module.setAuthSession("token", "123e4567-e89b-12d3-a456-426614174000");
     const result = await module.syncSession({ id:"123e4567-e89b-12d3-a456-426614174001" });
     assert.equal(result.ok, false);
     assert.equal(result.status, 502);
@@ -143,6 +146,7 @@ test("classifies retryable and permanent cloud failures", async () => {
 
   try {
     const module = await import("../src/api.js?retry-test=" + Date.now());
+    module.setAuthSession("token", "123e4567-e89b-12d3-a456-426614174000");
     const retryable = await module.listCloudSessions(50);
     assert.equal(retryable.retryable, true);
     status = 409;
@@ -169,6 +173,7 @@ test("classifies network failures as retryable", async () => {
 
   try {
     const module = await import("../src/api.js?offline-test=" + Date.now());
+    module.setAuthSession("token", "123e4567-e89b-12d3-a456-426614174000");
     const result = await module.listCloudSessions(50);
     assert.equal(result.ok, false);
     assert.equal(result.retryable, true);
