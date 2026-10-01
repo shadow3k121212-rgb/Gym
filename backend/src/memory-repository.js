@@ -1,0 +1,65 @@
+import { randomUUID } from "node:crypto";
+
+export class MemoryRepository {
+  constructor() {
+    this.users = new Map();
+    this.usersByEmail = new Map();
+    this.sessions = new Map();
+    this.idempotency = new Map();
+    this.events = new Map();
+  }
+
+  async health() { return true; }
+  async close() {}
+
+  async createUser({ email, passwordHash, passwordSalt }) {
+    if (this.usersByEmail.has(email)) {
+      const error = new Error("Email already registered.");
+      error.code = "DUPLICATE_EMAIL";
+      throw error;
+    }
+    const user = { id: randomUUID(), email, password_hash: passwordHash, password_salt: passwordSalt, status: "active", created_at: new Date().toISOString() };
+    this.users.set(user.id, user);
+    this.usersByEmail.set(email, user.id);
+    return user;
+  }
+
+  async getUserByEmail(email) {
+    const id = this.usersByEmail.get(email);
+    return id ? this.users.get(id) : null;
+  }
+
+  async getUserById(userId) {
+    const user = this.users.get(userId);
+    return user ? { id:user.id,email:user.email,status:user.status,created_at:user.created_at } : null;
+  }
+
+  async createSession(userId, input, idempotencyKey) {
+    const idem = `${userId}:${idempotencyKey}`;
+    if (this.idempotency.has(idem)) return { existing:true, session:this.idempotency.get(idem) };
+    const session = { id:input.id, user_id:userId, name:input.name, source:input.source, started_at:input.startedAt, completed_at:null, exercises:input.exercises };
+    this.sessions.set(session.id, session);
+    this.idempotency.set(idem, session);
+    return { existing:false, session };
+  }
+
+  async listSessions(userId, limit=20) {
+    return [...this.sessions.values()].filter((s)=>s.user_id===userId).sort((a,b)=>b.started_at.localeCompare(a.started_at)).slice(0,Math.min(Math.max(Number(limit)||20,1),50)).map((s)=>({
+      id:s.id,name:s.name,source:s.source,started_at:s.started_at,completed_at:s.completed_at,
+      volume:s.exercises.flatMap(e=>e.sets).filter(x=>x.completed).reduce((sum,x)=>sum+x.reps*x.weightKg,0),
+      completed_sets:s.exercises.flatMap(e=>e.sets).filter(x=>x.completed).length
+    }));
+  }
+
+  async createMovementEvent(userId,event) {
+    const session=this.sessions.get(event.sessionId);
+    if (!session || session.user_id!==userId) {
+      const error=new Error("Session not found.");
+      error.code="NOT_FOUND";
+      throw error;
+    }
+    const saved={id:randomUUID(),...event};
+    this.events.set(saved.id,saved);
+    return saved;
+  }
+}

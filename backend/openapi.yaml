@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: GYM Training API
-  version: 0.1.0
-  description: Authenticated sync API for the local-first GYM client.
+  version: 0.2.0
+  description: Authenticated sync API for the GYM local-first training product.
 servers:
   - url: https://api.example.invalid
 paths:
@@ -11,17 +11,50 @@ paths:
       operationId: health
       responses:
         "200":
-          description: Service healthy
+          description: Service health
+  /v1/auth/register:
+    post:
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 12, maxLength: 128 }
+      responses:
+        "201": { description: Account created }
+        "409": { description: Email already exists }
+  /v1/auth/login:
+    post:
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 12, maxLength: 128 }
+      responses:
+        "200": { description: Authenticated }
+        "401": { description: Invalid credentials }
   /v1/me:
     get:
       security: [{ bearerAuth: [] }]
+      operationId: me
       responses:
-        "200":
-          description: Current athlete
+        "200": { description: Current athlete }
+        "401": { description: Authentication required }
   /v1/sessions:
     post:
       security: [{ bearerAuth: [] }]
-      description: Create a workout session. Accepts an idempotency key.
+      operationId: createSession
       parameters:
         - in: header
           name: Idempotency-Key
@@ -33,23 +66,24 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/SessionCreate" }
       responses:
-        "201": { description: Created }
-        "409": { description: Idempotency conflict }
+        "201": { description: Session persisted }
+        "200": { description: Idempotent replay }
+        "400": { description: Invalid request }
+        "409": { description: Conflicting resource }
     get:
       security: [{ bearerAuth: [] }]
+      operationId: listSessions
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
       responses:
         "200": { description: Session page }
-  /v1/sessions/{sessionId}:
-    get:
-      security: [{ bearerAuth: [] }]
-      parameters:
-        - { in: path, name: sessionId, required: true, schema: { type: string } }
-      responses:
-        "200": { description: Session detail }
   /v1/movement-events:
     post:
       security: [{ bearerAuth: [] }]
-      description: Store validated derived movement metrics; raw camera video is out of scope by default.
+      operationId: createMovementEvent
+      description: Store validated derived movement metrics. Raw camera video is outside this API by default.
       requestBody:
         required: true
         content:
@@ -57,6 +91,7 @@ paths:
             schema: { $ref: "#/components/schemas/MovementEvent" }
       responses:
         "201": { description: Event accepted }
+        "404": { description: User does not own the session }
 
 components:
   securitySchemes:
@@ -66,7 +101,7 @@ components:
   schemas:
     SessionCreate:
       type: object
-      required: [id, startedAt, source]
+      required: [id, startedAt, source, exercises]
       properties:
         id: { type: string }
         startedAt: { type: string, format: date-time }
@@ -74,6 +109,7 @@ components:
         name: { type: string, maxLength: 120 }
         exercises:
           type: array
+          maxItems: 50
           items: { $ref: "#/components/schemas/ExerciseSession" }
     ExerciseSession:
       type: object
@@ -82,6 +118,7 @@ components:
         exerciseId: { type: string }
         sets:
           type: array
+          maxItems: 50
           items: { $ref: "#/components/schemas/WorkoutSet" }
     WorkoutSet:
       type: object

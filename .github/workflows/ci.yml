@@ -15,15 +15,24 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Unit tests
-        run: npm test
+          cache: npm
+
+      - name: Install backend dependencies
+        run: npm --prefix backend install --no-audit --no-fund
+
+      - name: Unit and API tests
+        run: npm run test:all
+
       - name: Static checks
         run: npm run check
+
       - name: Production build
         run: npm run build
+
       - name: Verify output
-        run: test -f dist/index.html && test -f dist/src/app.js
+        run: test -f dist/index.html && test -f dist/src/app.js && test -f dist/src/data.js && test -f dist/src/storage.js
