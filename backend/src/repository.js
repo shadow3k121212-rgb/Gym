@@ -152,6 +152,15 @@ export class PostgresRepository {
         [randomUUID(),event.sessionId,event.exerciseId,event.schemaVersion,event.source,event.timestamp,event.reps,event.confidence,event.model,event.metrics,idempotencyKey,requestHash,userId]
       );
       if (!inserted.rowCount) {
+        const owned = await client.query(
+          "select 1 from workout_sessions where id=$1 and user_id=$2",
+          [event.sessionId, userId]
+        );
+        if (!owned.rowCount) {
+          const error = new Error("Session not found.");
+          error.code = "NOT_FOUND";
+          throw error;
+        }
         const existing = await client.query(
           `select id,session_id,exercise_id,schema_version,source,occurred_at,reps,confidence,model,metrics_json,idempotency_key,idempotency_request_hash
            from movement_events
