@@ -1,0 +1,108 @@
+openapi: 3.1.0
+info:
+  title: GYM Training API
+  version: 0.1.0
+  description: Authenticated sync API for the local-first GYM client.
+servers:
+  - url: https://api.example.invalid
+paths:
+  /v1/health:
+    get:
+      operationId: health
+      responses:
+        "200":
+          description: Service healthy
+  /v1/me:
+    get:
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Current athlete
+  /v1/sessions:
+    post:
+      security: [{ bearerAuth: [] }]
+      description: Create a workout session. Accepts an idempotency key.
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 16, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SessionCreate" }
+      responses:
+        "201": { description: Created }
+        "409": { description: Idempotency conflict }
+    get:
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: Session page }
+  /v1/sessions/{sessionId}:
+    get:
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: sessionId, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Session detail }
+  /v1/movement-events:
+    post:
+      security: [{ bearerAuth: [] }]
+      description: Store validated derived movement metrics; raw camera video is out of scope by default.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MovementEvent" }
+      responses:
+        "201": { description: Event accepted }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    SessionCreate:
+      type: object
+      required: [id, startedAt, source]
+      properties:
+        id: { type: string }
+        startedAt: { type: string, format: date-time }
+        source: { type: string, enum: [manual, camera, wearable] }
+        name: { type: string, maxLength: 120 }
+        exercises:
+          type: array
+          items: { $ref: "#/components/schemas/ExerciseSession" }
+    ExerciseSession:
+      type: object
+      required: [exerciseId, sets]
+      properties:
+        exerciseId: { type: string }
+        sets:
+          type: array
+          items: { $ref: "#/components/schemas/WorkoutSet" }
+    WorkoutSet:
+      type: object
+      required: [index, reps, weightKg, completed]
+      properties:
+        index: { type: integer, minimum: 1 }
+        reps: { type: number, minimum: 0, maximum: 1000 }
+        weightKg: { type: number, minimum: 0, maximum: 1000 }
+        completed: { type: boolean }
+        completedAt: { type: string, format: date-time, nullable: true }
+        rpe: { type: number, minimum: 1, maximum: 10, nullable: true }
+    MovementEvent:
+      type: object
+      required: [schemaVersion, sessionId, exerciseId, timestamp, source, reps]
+      properties:
+        schemaVersion: { type: integer, minimum: 1 }
+        sessionId: { type: string }
+        exerciseId: { type: string }
+        timestamp: { type: string, format: date-time }
+        source: { type: string, enum: [manual, camera, wearable] }
+        reps: { type: number, minimum: 0, maximum: 1000 }
+        confidence: { type: number, minimum: 0, maximum: 1, nullable: true }
+        model: { type: string, nullable: true }
+        metrics: { type: object, additionalProperties: true }
