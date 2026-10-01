@@ -1,4 +1,5 @@
 import {
+  createHash,
   createHmac,
   randomBytes,
   timingSafeEqual,
@@ -8,6 +9,7 @@ import { promisify } from "node:util";
 
 const scrypt = promisify(scryptCallback);
 const ACCESS_TTL_SECONDS = 15 * 60;
+const REFRESH_TTL_SECONDS = 30 * 24 * 60 * 60;
 const SCRYPT_PARAMS = { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
 
 const base64url = (value) => Buffer.from(value).toString("base64url");
@@ -36,10 +38,11 @@ function sign(input, secret) {
   return createHmac("sha256", secret).update(input).digest("base64url");
 }
 
-export function issueAccessToken(userId, secret, nowMs = Date.now()) {
+export function issueAccessToken(userId, secret, nowMs = Date.now(), sessionId = null) {
   const header = base64url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
   const payload = base64url(JSON.stringify({
     sub: userId,
+    ...(sessionId ? { sid: sessionId } : {}),
     iat: Math.floor(nowMs / 1000),
     exp: Math.floor(nowMs / 1000) + ACCESS_TTL_SECONDS
   }));
@@ -63,8 +66,8 @@ export function verifyAccessToken(token, secret, nowMs = Date.now()) {
     const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
     const now = Math.floor(nowMs / 1000);
     if (parsedHeader.alg !== "HS256" || parsedHeader.typ !== "JWT") return null;
-    if (!parsed.sub || !Number.isInteger(parsed.exp) || parsed.exp <= now) return null;
-    return { userId: parsed.sub, issuedAt: parsed.iat, expiresAt: parsed.exp };
+    if (!parsed.sub || !parsed.sid || !Number.isInteger(parsed.exp) || parsed.exp <= now) return null;
+    return { userId: parsed.sub, sessionId: parsed.sid, issuedAt: parsed.iat, expiresAt: parsed.exp };
   } catch {
     return null;
   }
@@ -75,4 +78,20 @@ export function extractBearerToken(req) {
   if (!value || typeof value !== "string") return null;
   const [scheme, token] = value.split(" ");
   return scheme?.toLowerCase() === "bearer" ? token : null;
+}
+
+export function createRefreshToken() {
+  return randomBytes(48).toString("base64url");
+}
+
+export function hashRefreshToken(token) {
+  return createHash("sha256").update(String(token || "")).digest("hex");
+}
+
+export function refreshExpiry(nowMs = Date.now()) {
+  return new Date(nowMs + REFRESH_TTL_SECONDS * 1000);
+}
+
+export function getRefreshTtlSeconds() {
+  return REFRESH_TTL_SECONDS;
 }
