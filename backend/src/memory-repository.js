@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { encodeSessionCursor } from "./pagination.js";
 
 const idempotencyHash = (input) => createHash("sha256").update(JSON.stringify(input)).digest("hex");
 
@@ -64,11 +65,28 @@ export class MemoryRepository {
   }
 
   async listSessions(userId, limit=20) {
-    return [...this.sessions.values()].filter((s)=>s.user_id===userId).sort((a,b)=>b.started_at.localeCompare(a.started_at)).slice(0,Math.min(Math.max(Number(limit)||20,1),50)).map((s)=>({
+    return (await this.listSessionsPage(userId, { limit })).sessions;
+  }
+
+  async listSessionsPage(userId, { limit=20, before=null } = {}) {
+    let rows = [...this.sessions.values()].filter((s)=>s.user_id===userId);
+    rows.sort((a,b) => b.started_at.localeCompare(a.started_at) || b.id.localeCompare(a.id));
+    if (before) {
+      rows = rows.filter((s) =>
+        s.started_at < before.startedAt ||
+        (s.started_at === before.startedAt && s.id < before.id)
+      );
+    }
+    const hasMore = rows.length > limit;
+    const sessions = rows.slice(0, limit).map((s)=>({
       id:s.id,name:s.name,source:s.source,started_at:s.started_at,completed_at:s.completed_at,
       volume:s.exercises.flatMap(e=>e.sets).filter(x=>x.completed).reduce((sum,x)=>sum+x.reps*x.weightKg,0),
       completed_sets:s.exercises.flatMap(e=>e.sets).filter(x=>x.completed).length
     }));
+    const nextCursor = hasMore && sessions.length
+      ? encodeSessionCursor({ startedAt:sessions[sessions.length - 1].started_at, id:sessions[sessions.length - 1].id })
+      : null;
+    return { sessions, nextCursor };
   }
 
   async createMovementEvent(userId,event,idempotencyKey) {
