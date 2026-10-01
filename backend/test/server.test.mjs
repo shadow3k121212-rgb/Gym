@@ -115,6 +115,56 @@ test("persists a session and returns the same result for the same idempotency ke
   assert.equal(list.status,200);
   assert.equal(list.body.sessions.length,1);
   assert.equal(Number(list.body.sessions[0].volume),560);
+  assert.equal(list.body.sessions[0].completed_at, "2026-10-01T12:05:00.000Z");
+});
+
+test("rejects reusing an idempotency key with a different payload", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST", body:JSON.stringify({email:"conflict@example.com",password:"correct horse battery staple"})
+  });
+  const token = registered.body.accessToken;
+  const base = {
+    id:"123e4567-e89b-12d3-a456-426614174002",
+    startedAt:"2026-10-01T13:00:00Z",
+    completedAt:"2026-10-01T13:05:00Z",
+    source:"manual",
+    name:"Conflict Test",
+    exercises:[{exerciseId:"bench",sets:[{index:1,reps:8,weightKg:70,completed:true,completedAt:"2026-10-01T13:05:00Z",rpe:8}]}]
+  };
+  const first=await request(testServer.base,"/v1/sessions",{
+    method:"POST",headers:{authorization:`Bearer ${token}`,"idempotency-key":"conflict-write-123456"},
+    body:JSON.stringify(base)
+  });
+  const changed={...base,name:"Changed Payload"};
+  const second=await request(testServer.base,"/v1/sessions",{
+    method:"POST",headers:{authorization:`Bearer ${token}`,"idempotency-key":"conflict-write-123456"},
+    body:JSON.stringify(changed)
+  });
+  assert.equal(first.status,201);
+  assert.equal(second.status,409);
+  assert.match(second.body.error.message, /different request payload/);
+});
+
+test("requires timestamps to match set completion state", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST", body:JSON.stringify({email:"set-state@example.com",password:"correct horse battery staple"})
+  });
+  const response = await request(testServer.base, "/v1/sessions", {
+    method:"POST",
+    headers:{authorization:`Bearer ${registered.body.accessToken}`,"idempotency-key":"set-state-123456789"},
+    body:JSON.stringify({
+      id:"123e4567-e89b-12d3-a456-426614174003",
+      startedAt:"2026-10-01T14:00:00Z",
+      source:"manual",
+      name:"Invalid Set State",
+      exercises:[{exerciseId:"bench",sets:[{index:1,reps:8,weightKg:70,completed:true,completedAt:null,rpe:8}]}]
+    })
+  });
+  assert.equal(response.status,400);
 });
 
 test("blocks movement events for another user’s session", async (t) => {
