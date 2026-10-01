@@ -4,7 +4,12 @@ import { PostgresRepository } from "./src/repository.js";
 
 const port = Number(process.env.PORT || 8787);
 const jwtSecret = process.env.JWT_SECRET;
-const corsOrigin = process.env.CORS_ORIGIN || "*";
+const corsOrigin = process.env.CORS_ORIGIN || (process.env.NODE_ENV === "production" ? "" : "*");
+
+if (process.env.NODE_ENV === "production" && (!corsOrigin || corsOrigin === "*")) {
+  console.error("CORS_ORIGIN must be explicitly configured in production.");
+  process.exit(1);
+}
 
 if (!process.env.DATABASE_URL) {
   console.error("DATABASE_URL is required.");
