@@ -58,9 +58,23 @@ async function authenticate(path, email, password) {
 export function login(email, password) { return authenticate("/v1/auth/login", email, password); }
 export function register(email, password) { return authenticate("/v1/auth/register", email, password); }
 
-export function syncSession(session) {
-  if (!apiBaseUrl || !hasAuth()) return Promise.resolve({ ok:false, message:"Cloud sync is not configured." });
-  return request("/v1/sessions", { method:"POST", headers:{ "idempotency-key":"gym-" + session.id }, body:JSON.stringify(session) });
+export async function syncSession(session) {
+  if (!apiBaseUrl || !hasAuth()) return { ok:false, message:"Cloud sync is not configured." };
+  const result = await request("/v1/sessions", {
+    method:"POST",
+    headers:{ "idempotency-key":"gym-" + session.id },
+    body:JSON.stringify(session)
+  });
+  if (!result.ok) return result;
+  if (!result.body?.session || result.body.session.id !== session.id) {
+    return {
+      ok:false,
+      status:502,
+      malformedResponse:true,
+      message:"GYM API returned an invalid sync response."
+    };
+  }
+  return result;
 }
 
 export function listCloudSessions(limit = 50, cursor = null) {
