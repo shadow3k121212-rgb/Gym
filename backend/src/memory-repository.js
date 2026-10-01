@@ -80,12 +80,38 @@ export class MemoryRepository {
   }
 
   async deleteAccount(userId) {
-    if (!this.users.has(userId)) return false;
-    for (const [id,session] of this.authSessions) if (session.user_id === userId) this.authSessions.delete(id);
-    for (const [id,token] of this.passwordResetTokens) if (token.user_id === userId) this.passwordResetTokens.delete(id);
+    const user = this.users.get(userId);
+    if (!user) return false;
+
+    const sessionIds = new Set(
+      [...this.sessions.values()]
+        .filter((session) => session.user_id === userId)
+        .map((session) => session.id)
+    );
+
+    for (const [id,event] of this.events) {
+      if (sessionIds.has(event.sessionId)) this.events.delete(id);
+    }
+    for (const [key,value] of this.eventIdempotency) {
+      if (sessionIds.has(value.event?.sessionId)) this.eventIdempotency.delete(key);
+    }
+
+    for (const [id,session] of this.authSessions) {
+      if (session.user_id === userId) {
+        this.authSessions.delete(id);
+        this.authSessionsByToken.delete(session.token_hash);
+      }
+    }
+    for (const [id,token] of this.passwordResetTokens) {
+      if (token.user_id === userId) {
+        this.passwordResetTokens.delete(id);
+        this.passwordResetByHash.delete(token.token_hash);
+      }
+    }
     for (const [id,session] of this.sessions) if (session.user_id === userId) this.sessions.delete(id);
     for (const [key,value] of this.idempotency) if (value.session?.user_id === userId) this.idempotency.delete(key);
-    this.usersByEmail.delete(this.users.get(userId).email);
+
+    this.usersByEmail.delete(user.email);
     this.users.delete(userId);
     this.accountDeletionAudit.push({
       id:randomUUID(),
