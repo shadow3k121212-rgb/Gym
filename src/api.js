@@ -61,26 +61,34 @@ async function rawRequest(path, options = {}, includeAccessToken = true) {
   }
 }
 
+async function runRefresh() {
+  const result = await rawRequest("/v1/auth/refresh", { method:"POST" }, false);
+  if (!result.ok) {
+    clearAuth();
+    return result;
+  }
+  if (!result.body?.accessToken || typeof result.body?.user?.id !== "string" || !result.body.user.id) {
+    clearAuth();
+    return { ok:false, status:502, malformedResponse:true, message:"GYM API returned an invalid authentication response." };
+  }
+  setAuthSession(result.body.accessToken, result.body.user.id);
+  return result;
+}
+
 export async function refreshAuth() {
   if (!apiBaseUrl) return { ok:false, message:"Cloud API is not configured." };
   if (refreshInFlight) return refreshInFlight;
 
-  refreshInFlight = (async () => {
-    const result = await rawRequest("/v1/auth/refresh", { method:"POST" }, false);
-    if (!result.ok) {
-      clearAuth();
-      return result;
-    }
-    if (!result.body?.accessToken || typeof result.body?.user?.id !== "string" || !result.body.user.id) {
-      clearAuth();
-      return { ok:false, status:502, malformedResponse:true, message:"GYM API returned an invalid authentication response." };
-    }
-    setAuthSession(result.body.accessToken, result.body.user.id);
-    return result;
-  })();
+  const start = () => {
+    refreshInFlight = runRefresh();
+    return refreshInFlight;
+  };
 
   try {
-    return await refreshInFlight;
+    if (globalThis.navigator?.locks?.request) {
+      return await globalThis.navigator.locks.request("gym-auth-refresh", { mode:"exclusive" }, start);
+    }
+    return await start();
   } finally {
     refreshInFlight = null;
   }
