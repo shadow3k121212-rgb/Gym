@@ -1,0 +1,11 @@
+{
+  "name": "GYM — Training OS",
+  "short_name": "GYM",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#101310",
+  "theme_color": "#101310",
+  "icons": [
+    { "src": "./favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

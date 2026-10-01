@@ -1,0 +1,66 @@
+name: CI
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [main, "product/**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: gym
+          POSTGRES_PASSWORD: gym-ci-password
+          POSTGRES_DB: gym
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U gym -d gym"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install backend dependencies
+        run: npm --prefix backend install --no-audit --no-fund
+
+      - name: Unit and API tests
+        run: npm run test:all
+
+      - name: Fresh PostgreSQL migrations
+        env:
+          DATABASE_URL: postgresql://gym:gym-ci-password@localhost:5432/gym
+        run: |
+          npm --prefix backend run migrate
+          npm --prefix backend run migrate
+          npm --prefix backend run verify:schema
+
+      - name: HTTP smoke test
+        run: npm run smoke
+
+      - name: Dependency audit
+        run: npm audit --prefix backend --audit-level=high
+
+      - name: Static checks
+        run: npm run check
+
+      - name: Production build
+        run: npm run build
+
+      - name: Verify output
+        run: test -f dist/index.html && test -f dist/src/app.js && test -f dist/src/data.js && test -f dist/src/storage.js
