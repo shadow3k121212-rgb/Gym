@@ -241,6 +241,60 @@ test("blocks movement events for another user’s session", async (t) => {
   const response=await request(testServer.base,"/v1/movement-events",{method:"POST",headers:{authorization:`Bearer ${b.body.accessToken}`,"idempotency-key":"movement-owner-123456"},body:JSON.stringify({schemaVersion:1,sessionId:session.id,exerciseId:"bench",timestamp:"2026-10-01T12:00:00Z",source:"camera",reps:8,confidence:.92,model:"pose-v0",metrics:{rom:.81}})});
   assert.equal(response.status,404);
 });
+test("session history is isolated by authenticated user", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+
+  const a = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"history-a@example.com",password:"correct horse battery staple"})
+  });
+  const b = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"history-b@example.com",password:"correct horse battery staple"})
+  });
+
+  const sessionA = {
+    id:"123e4567-e89b-12d3-a456-426614174110",
+    startedAt:"2026-10-01T18:00:00Z",
+    source:"manual",
+    name:"Private A",
+    exercises:[]
+  };
+  const sessionB = {
+    id:"123e4567-e89b-12d3-a456-426614174111",
+    startedAt:"2026-10-01T18:01:00Z",
+    source:"manual",
+    name:"Private B",
+    exercises:[]
+  };
+
+  await request(testServer.base, "/v1/sessions", {
+    method:"POST",
+    headers:{authorization:`Bearer ${a.body.accessToken}`,"idempotency-key":"history-a-write-123456"},
+    body:JSON.stringify(sessionA)
+  });
+  await request(testServer.base, "/v1/sessions", {
+    method:"POST",
+    headers:{authorization:`Bearer ${b.body.accessToken}`,"idempotency-key":"history-b-write-123456"},
+    body:JSON.stringify(sessionB)
+  });
+
+  const listA = await request(testServer.base, "/v1/sessions", {
+    headers:{authorization:`Bearer ${a.body.accessToken}`}
+  });
+  const listB = await request(testServer.base, "/v1/sessions", {
+    headers:{authorization:`Bearer ${b.body.accessToken}`}
+  });
+
+  assert.equal(listA.status,200);
+  assert.equal(listB.status,200);
+  assert.deepEqual(listA.body.sessions.map((s) => s.id), [sessionA.id]);
+  assert.deepEqual(listB.body.sessions.map((s) => s.id), [sessionB.id]);
+  assert.ok(!JSON.stringify(listA.body).includes(sessionB.name));
+  assert.ok(!JSON.stringify(listB.body).includes(sessionA.name));
+});
+
 test("paginates session history with a stable cursor", async (t) => {
   const testServer = await makeServer();
   t.after(() => testServer.server.close());
@@ -593,6 +647,50 @@ test("password reset requests do not enumerate accounts and reset tokens are one
     headers:{authorization:`Bearer ${known.body.accessToken}`}
   });
   assert.equal(oldAccess.status,401);
+});
+
+test("password reset invalidates every active device session", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+
+  const first = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"reset-all@example.com",password:"correct horse battery staple"})
+  });
+  const second = await request(testServer.base, "/v1/auth/login", {
+    method:"POST",
+    body:JSON.stringify({email:"reset-all@example.com",password:"correct horse battery staple"})
+  });
+
+  const rawToken = "development-reset-token-abcdef123456789012345678901234567890";
+  const userId = JSON.parse(Buffer.from(first.body.accessToken.split(".")[1], "base64url").toString("utf8")).sub;
+  await testServer.repo.createPasswordResetToken({
+    id:"123e4567-e89b-12d3-a456-426614174012",
+    userId,
+    tokenHash:hashRefreshToken(rawToken),
+    expiresAt:new Date(Date.now() + 30 * 60 * 1000)
+  });
+
+  const reset = await request(testServer.base, "/v1/auth/password-reset/confirm", {
+    method:"POST",
+    body:JSON.stringify({token:rawToken,password:"a-new-correct-password-123"})
+  });
+  assert.equal(reset.status,200);
+
+  const firstMe = await request(testServer.base, "/v1/me", {
+    headers:{authorization:`Bearer ${first.body.accessToken}`}
+  });
+  const secondMe = await request(testServer.base, "/v1/me", {
+    headers:{authorization:`Bearer ${second.body.accessToken}`}
+  });
+  assert.equal(firstMe.status,401);
+  assert.equal(secondMe.status,401);
+
+  const sessions = await request(testServer.base, "/v1/auth/login", {
+    method:"POST",
+    body:JSON.stringify({email:"reset-all@example.com",password:"a-new-correct-password-123"})
+  });
+  assert.equal(sessions.status,200);
 });
 
 test("account deletion requires password confirmation and removes the account", async (t) => {
