@@ -101,11 +101,13 @@ function renderSessionList(sessions) {
         <strong>${session.isCurrent ? "This device" : "Other device"}</strong>
         <span class="micro-note">Created ${escapeHtml(new Date(session.created_at).toLocaleString("en-IN"))}</span>
       </div>
-      ${session.revoked_at
-        ? `<span class="tag">REVOKED</span>`
-        : session.isCurrent
-          ? `<span class="tag">ACTIVE</span>`
-          : `<button class="text-button" data-revoke-session="${escapeHtml(session.id)}">Revoke</button>`}
+      ${session.status === "expired"
+        ? `<span class="tag">EXPIRED</span>`
+        : session.status === "revoked"
+          ? `<span class="tag">REVOKED</span>`
+          : session.isCurrent
+            ? `<span class="tag">ACTIVE</span>`
+            : `<button class="text-button" data-revoke-session="${escapeHtml(session.id)}">Revoke</button>`}
     </div>
   `).join("");
   target.querySelectorAll("[data-revoke-session]").forEach((button) => button.addEventListener("click", async () => {
