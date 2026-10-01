@@ -162,4 +162,23 @@ Any later PR-context check remains verification-only; the direct branch CI for t
 
 ## Phase 4 initial checkpoint — 2026-10-01
 
-Status: IN PROGRESS. First implementation slice: durable sync retry metadata and bounded backoff so transient cloud failures do not busy-loop or silently discard pending local work.
+Status: IN PROGRESS.
+
+Completed slices:
+- durable sync retry metadata with attempts, next-at timestamps, last-error retention, and blocked-state retention for permanent failures
+- bounded exponential backoff (5 seconds to 15 minutes) for transient sync failures
+- authentication failures remain immediately retryable after re-authentication
+- retry-reset primitive allows explicitly unblocking retained sync work without data loss
+- overlapping sync flushes are prevented; scheduled retries wake when the next due item becomes eligible
+- structured HTTP request telemetry records request ID, method, route, status, and duration without credential material
+- password-recovery delivery is bounded by a 5-second outbound timeout so a slow webhook cannot hold the request indefinitely
+
+Verification evidence:
+- CI run #387 passed on exact retry-layer head `7c000ffa6ea63525aa60f131ccfb67f748f38618`.
+- CI run #389 passed on exact observability/timeout head `cbd1e7ab2a4c766908696f3b0849e3b1b8f60fff`.
+- Both runs passed unit/API tests, PostgreSQL migrations + schema verification, HTTP smoke, dependency audit, static checks, production build, and output verification.
+
+Next Phase 4 implementation slice:
+- surface retained/blocked sync work in the account/settings UI with an explicit manual retry path
+- add targeted client recovery tests around scheduled backoff, account switching, and overlapping online/auth events
+- add bounded request/queue metrics that can feed centralized production observability without collecting workout or credential payloads.
