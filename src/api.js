@@ -41,8 +41,10 @@ export function syncSession(session) {
   return request("/v1/sessions", { method:"POST", headers:{ "idempotency-key":"gym-" + session.id }, body:JSON.stringify(session) });
 }
 
-export function listCloudSessions(limit = 50) {
+export function listCloudSessions(limit = 50, cursor = null) {
   if (!apiBaseUrl || !hasAuth()) return Promise.resolve({ ok:false, message:"Cloud sync is not configured." });
-  const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 50);
-  return request("/v1/sessions?limit=" + safeLimit);
+  const safeLimit = Number.isInteger(limit) ? Math.min(Math.max(limit, 1), 100) : 50;
+  const params = new URLSearchParams({ limit: String(safeLimit) });
+  if (cursor) params.set("before", cursor);
+  return request("/v1/sessions?" + params.toString());
 }
