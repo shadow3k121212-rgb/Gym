@@ -13,6 +13,9 @@ export class MemoryRepository {
     this.eventIdempotency = new Map();
     this.authSessions = new Map();
     this.authSessionsByToken = new Map();
+    this.passwordResetTokens = new Map();
+    this.passwordResetByHash = new Map();
+    this.accountDeletionAudit = [];
   }
 
   async health() { return true; }
@@ -38,6 +41,59 @@ export class MemoryRepository {
   async getUserById(userId) {
     const user = this.users.get(userId);
     return user ? { id:user.id,email:user.email,status:user.status,created_at:user.created_at } : null;
+  }
+
+  async createPasswordResetToken({ id, userId, tokenHash, expiresAt }) {
+    for (const token of this.passwordResetTokens.values()) {
+      if (token.user_id === userId && !token.used_at) token.used_at = new Date().toISOString();
+    }
+    const token = {
+      id,
+      user_id:userId,
+      token_hash:tokenHash,
+      created_at:new Date().toISOString(),
+      expires_at:expiresAt instanceof Date ? expiresAt.toISOString() : expiresAt,
+      used_at:null
+    };
+    this.passwordResetTokens.set(id, token);
+    this.passwordResetByHash.set(tokenHash, id);
+    return token;
+  }
+
+  async resetPassword(tokenHash, passwordHash, passwordSalt) {
+    const id = this.passwordResetByHash.get(tokenHash);
+    const token = id ? this.passwordResetTokens.get(id) : null;
+    if (!token || token.used_at || new Date(token.expires_at).getTime() <= Date.now()) return null;
+    const user = this.users.get(token.user_id);
+    if (!user || user.status !== "active") return null;
+    token.used_at = new Date().toISOString();
+    user.password_hash = passwordHash;
+    user.password_salt = passwordSalt;
+    user.updated_at = new Date().toISOString();
+    for (const session of this.authSessions.values()) {
+      if (session.user_id === user.id && !session.revoked_at) {
+        session.revoked_at = new Date().toISOString();
+        session.revocation_reason = "password-reset";
+      }
+    }
+    return { id:user.id,email:user.email,status:user.status };
+  }
+
+  async deleteAccount(userId) {
+    if (!this.users.has(userId)) return false;
+    for (const [id,session] of this.authSessions) if (session.user_id === userId) this.authSessions.delete(id);
+    for (const [id,token] of this.passwordResetTokens) if (token.user_id === userId) this.passwordResetTokens.delete(id);
+    for (const [id,session] of this.sessions) if (session.user_id === userId) this.sessions.delete(id);
+    for (const [key,value] of this.idempotency) if (value.session?.user_id === userId) this.idempotency.delete(key);
+    this.usersByEmail.delete(this.users.get(userId).email);
+    this.users.delete(userId);
+    this.accountDeletionAudit.push({
+      id:randomUUID(),
+      event_type:"account-deleted",
+      occurred_at:new Date().toISOString(),
+      subject_digest:createHash("sha256").update(userId).digest("hex")
+    });
+    return true;
   }
 
   async createAuthSession({ id, familyId, userId, tokenHash, expiresAt }) {
