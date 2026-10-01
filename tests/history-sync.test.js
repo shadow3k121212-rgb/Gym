@@ -88,3 +88,18 @@ test("normalizes valid remote history values deterministically", () => {
     { id:"valid", date:"2026-10-01", name:"Workout", volumeKg:560.6, sets:8, source:"manual" }
   );
 });
+test("tags remote history with the authenticated cloud owner", () => {
+  const owner = "123e4567-e89b-12d3-a456-426614174000";
+  assert.deepEqual(
+    remoteSessionToHistory({
+      id:"owned",
+      started_at:"2026-10-01T12:00:00Z",
+      completed_at:null,
+      name:"Owned",
+      source:"manual",
+      volume:"100",
+      completed_sets:"2"
+    }, owner),
+    { id:"owned", date:"2026-10-01", name:"Owned", volumeKg:100, sets:2, source:"manual", cloudOwnerId:owner }
+  );
+});
