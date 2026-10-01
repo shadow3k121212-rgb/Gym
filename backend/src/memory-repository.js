@@ -50,6 +50,11 @@ export class MemoryRepository {
       }
       return { existing:true, session:existing.session };
     }
+    if (this.sessions.has(input.id)) {
+      const error = new Error("Session already exists.");
+      error.code = "23505";
+      throw error;
+    }
     const session = {
       id:input.id,
       user_id:userId,
