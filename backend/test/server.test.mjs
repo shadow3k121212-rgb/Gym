@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { MemoryRepository } from "../src/memory-repository.js";
 import { createApi } from "../src/server.js";
+import { hashRefreshToken } from "../src/auth.js";
 
 async function makeServer() {
   const repo = new MemoryRepository();
@@ -531,4 +532,90 @@ test("lists and revokes only the requesting user's sessions", async (t) => {
     headers:{authorization:`Bearer ${a.body.accessToken}`}
   });
   assert.equal(me.status,401);
+});
+test("password reset requests do not enumerate accounts and reset tokens are one-time", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+
+  const known = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"recover@example.com",password:"correct horse battery staple"})
+  });
+  assert.equal(known.status,201);
+
+  const knownRequest = await request(testServer.base, "/v1/auth/password-reset/request", {
+    method:"POST",
+    body:JSON.stringify({email:"recover@example.com"})
+  });
+  const unknownRequest = await request(testServer.base, "/v1/auth/password-reset/request", {
+    method:"POST",
+    body:JSON.stringify({email:"missing@example.com"})
+  });
+  assert.equal(knownRequest.status,202);
+  assert.equal(unknownRequest.status,202);
+  assert.deepEqual(
+    { accepted:knownRequest.body.accepted },
+    { accepted:unknownRequest.body.accepted }
+  );
+
+  const rawToken = "development-reset-token-123456789012345678901234567890";
+  await testServer.repo.createPasswordResetToken({
+    id:"123e4567-e89b-12d3-a456-426614174010",
+    userId:JSON.parse(Buffer.from(known.body.accessToken.split(".")[1],"base64url").toString("utf8")).sub,
+    tokenHash:hashRefreshToken(rawToken),
+    expiresAt:new Date(Date.now() + 30 * 60 * 1000)
+  });
+
+  const reset = await request(testServer.base, "/v1/auth/password-reset/confirm", {
+    method:"POST",
+    body:JSON.stringify({token:rawToken,password:"a-new-correct-password-123"})
+  });
+  assert.equal(reset.status,200);
+
+  const reuse = await request(testServer.base, "/v1/auth/password-reset/confirm", {
+    method:"POST",
+    body:JSON.stringify({token:rawToken,password:"another-new-password-123"})
+  });
+  assert.equal(reuse.status,400);
+
+  const oldAccess = await request(testServer.base, "/v1/me", {
+    headers:{authorization:`Bearer ${known.body.accessToken}`}
+  });
+  assert.equal(oldAccess.status,401);
+});
+
+test("account deletion requires password confirmation and removes the account", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"delete@example.com",password:"correct horse battery staple"})
+  });
+  const bad = await request(testServer.base, "/v1/auth/delete-account", {
+    method:"POST",
+    headers:{authorization:`Bearer ${registered.body.accessToken}`},
+    body:JSON.stringify({password:"wrong-password-123"})
+  });
+  assert.equal(bad.status,401);
+
+  const deleted = await request(testServer.base, "/v1/auth/delete-account", {
+    method:"POST",
+    headers:{authorization:`Bearer ${registered.body.accessToken}`},
+    body:JSON.stringify({password:"correct horse battery staple"})
+  });
+  assert.equal(deleted.status,200);
+  assert.equal(deleted.body.deleted,true);
+  assert.equal(testServer.repo.accountDeletionAudit.length,1);
+
+  const me = await request(testServer.base, "/v1/me", {
+    headers:{authorization:`Bearer ${registered.body.accessToken}`}
+  });
+  assert.equal(me.status,401);
+
+  const login = await request(testServer.base, "/v1/auth/login", {
+    method:"POST",
+    body:JSON.stringify({email:"delete@example.com",password:"correct horse battery staple"})
+  });
+  assert.equal(login.status,401);
 });
