@@ -247,7 +247,12 @@ export class PostgresRepository {
 
   async listAuthSessions(userId) {
     const result = await this.pool.query(
-      `select id,created_at,expires_at,last_seen_at,revoked_at,revocation_reason
+      `select id,created_at,expires_at,last_seen_at,revoked_at,revocation_reason,
+        case
+          when revoked_at is not null then 'revoked'
+          when expires_at <= now() then 'expired'
+          else 'active'
+        end as status
        from auth_sessions where user_id=$1 order by created_at desc`,
       [userId]
     );
