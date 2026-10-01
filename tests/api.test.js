@@ -77,3 +77,28 @@ test("passes the opaque cursor through cloud history pagination", async () => {
     globalThis.__GYM_CONFIG__ = originalConfig;
   }
 });
+test("treats a successful HTTP response without the synced session as malformed", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalStorageDescriptor = installStorage(new Map([
+    ["gym:access-token", "token"],
+    ["gym:auth-user-id", "123e4567-e89b-12d3-a456-426614174000"]
+  ]));
+  const originalConfig = globalThis.__GYM_CONFIG__;
+  globalThis.__GYM_CONFIG__ = { apiBaseUrl: "https://api.example.test" };
+  globalThis.fetch = async () => new Response(JSON.stringify({ ok:true }), {
+    status:201,
+    headers:{ "content-type":"application/json" }
+  });
+
+  try {
+    const module = await import("../src/api.js?malformed-sync=" + Date.now());
+    const result = await module.syncSession({ id:"123e4567-e89b-12d3-a456-426614174001" });
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 502);
+    assert.equal(result.malformedResponse, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreStorage(originalStorageDescriptor);
+    globalThis.__GYM_CONFIG__ = originalConfig;
+  }
+});
