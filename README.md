@@ -4,7 +4,7 @@ A mobile-first training tracker foundation with a focused workout flow, local-fi
 
 ## Status
 
-**Foundation / prototype.** This repository currently ships a client-side demo, not a production-ready commercial service. Authentication, cloud sync, billing, validated coaching models, and camera-based form analysis are not implemented.
+**Public beta foundation.** The repository ships the local-first workout product plus an optional authenticated API/PostgreSQL foundation. No production deployment is included yet, and billing, validated coaching models, and real camera-based form analysis remain roadmap work.
 
 ## Run locally
 
@@ -19,6 +19,8 @@ npm run dev
 
 ```bash
 npm test
+npm run test:all
+npm run smoke
 npm run check
 npm run build
 ```
@@ -35,7 +37,7 @@ No runtime dependencies are required.
 
 ## Roadmap
 
-See [PRODUCT.md](./PRODUCT.md) for the 48-hour launch plan and [ARCHITECTURE.md](./ARCHITECTURE.md) for the target system boundaries.
+See [PRODUCT.md](./PRODUCT.md) for the launch plan, [ARCHITECTURE.md](./ARCHITECTURE.md) for system boundaries, and [RELEASE-GATES.md](./RELEASE-GATES.md) for production evidence requirements.
 
 ## License
 
