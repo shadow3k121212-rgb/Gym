@@ -1,3 +1,5 @@
+import { getExercise } from "./data.js";
+
 export const STORAGE_KEY = "gym:state:v2";
 const LEGACY_KEY = "gym:state:v1";
 
@@ -15,6 +17,65 @@ export function defaultState(history = []) {
 
 function safeParse(value) {
   try { return JSON.parse(value); } catch { return null; }
+}
+
+function finiteInRange(value, min, max, fallback) {
+  const next = Number(value);
+  return Number.isFinite(next) ? Math.min(max, Math.max(min, next)) : fallback;
+}
+
+function normalizeSet(set, index) {
+  if (!set || typeof set !== "object") return null;
+  const completedAt = typeof set.completedAt === "string" && !Number.isNaN(Date.parse(set.completedAt))
+    ? new Date(set.completedAt).toISOString()
+    : null;
+  return {
+    index: index + 1,
+    reps: finiteInRange(set.reps, 0, 1000, 0),
+    weightKg: finiteInRange(set.weightKg, 0, 1000, 0),
+    completed: Boolean(set.completed),
+    completedAt,
+    rpe: set.rpe === null || set.rpe === undefined || set.rpe === "" ? null : finiteInRange(set.rpe, 1, 10, 1)
+  };
+}
+
+function normalizeSession(session) {
+  if (!session || typeof session !== "object" || typeof session.id !== "string") return null;
+  if (!Array.isArray(session.exercises)) return null;
+  const exercises = session.exercises
+    .filter((item) => item && typeof item.exerciseId === "string" && getExercise(item.exerciseId))
+    .map((item) => ({
+      exerciseId: item.exerciseId,
+      sets: Array.isArray(item.sets)
+        ? item.sets.map((set, index) => normalizeSet(set, index)).filter(Boolean).slice(0, 50)
+        : []
+    }))
+    .slice(0, 50);
+  if (!exercises.length) return null;
+  return {
+    id: session.id,
+    name: typeof session.name === "string" && session.name.trim() ? session.name.slice(0, 120) : "Workout",
+    startedAt: typeof session.startedAt === "string" && !Number.isNaN(Date.parse(session.startedAt))
+      ? new Date(session.startedAt).toISOString()
+      : new Date().toISOString(),
+    completedAt: typeof session.completedAt === "string" && !Number.isNaN(Date.parse(session.completedAt))
+      ? new Date(session.completedAt).toISOString()
+      : null,
+    source: ["manual", "camera", "wearable"].includes(session.source) ? session.source : "manual",
+    exercises
+  };
+}
+
+function normalizeHistory(history) {
+  if (!Array.isArray(history)) return [];
+  return history.filter((item) => item && typeof item.id === "string").slice(-100).map((item) => ({
+    id: item.id,
+    date: typeof item.date === "string" ? item.date.slice(0, 10) : new Date().toISOString().slice(0, 10),
+    name: typeof item.name === "string" ? item.name.slice(0, 120) : "Workout",
+    volumeKg: finiteInRange(item.volumeKg, 0, 10000000, 0),
+    sets: Math.floor(finiteInRange(item.sets, 0, 1000, 0)),
+    source: typeof item.source === "string" ? item.source.slice(0, 30) : "manual"
+  }));
 }
 
 function migrateLegacy(legacy) {
@@ -39,8 +100,10 @@ export function loadState(storage = globalThis.localStorage) {
     return {
       ...base,
       ...current,
-      history: Array.isArray(current.history) ? current.history : [],
-      syncQueue: Array.isArray(current.syncQueue) ? current.syncQueue.slice(0, 20) : [],
+      activeView: ["dashboard", "workout", "progress", "library", "settings"].includes(current.activeView) ? current.activeView : "dashboard",
+      session: normalizeSession(current.session),
+      history: normalizeHistory(current.history),
+      syncQueue: Array.isArray(current.syncQueue) ? current.syncQueue.map(normalizeSession).filter(Boolean).slice(-20) : [],
       settings: {
         ...base.settings,
         ...(current.settings || {}),
