@@ -10,13 +10,21 @@ import {
 } from "./workout-engine.js";
 import { displayUnit, toDisplayVolume, toDisplayWeight, toKg, weightInputStep } from "./units.js";
 import { mergeHistory } from "./history-sync.js";
-import { enqueueSyncItem, removeSyncItem } from "./sync-queue.js";
+import {
+  enqueueSyncItem,
+  getDueSyncItems,
+  getNextSyncRetryAt,
+  recordSyncFailure,
+  removeSyncItem
+} from "./sync-queue.js";
 
 const REST_SECONDS = 90;
 let state = loadState();
 let restTimer = null;
 let restRemaining = 0;
 let lastSetAction = null;
+let syncFlushRunning = false;
+let syncRetryTimer = null;
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -96,33 +104,73 @@ async function refreshCloudHistory() {
   }
 }
 
+function scheduleSyncRetry() {
+  if (syncRetryTimer) clearTimeout(syncRetryTimer);
+  syncRetryTimer = null;
+  const nextRetryAt = getNextSyncRetryAt(state.syncQueue);
+  if (!nextRetryAt) return;
+  const delay = Math.max(0, Math.min(2147483647, nextRetryAt - Date.now()));
+  syncRetryTimer = setTimeout(() => {
+    syncRetryTimer = null;
+    void flushSyncQueue();
+  }, delay);
+}
+
+function persistQueueAfterFailure(nextQueue, fallbackQueue, message) {
+  state.syncQueue = nextQueue;
+  if (save()) return true;
+  state.syncQueue = fallbackQueue;
+  announce(message);
+  return false;
+}
+
 async function flushSyncQueue() {
-  const currentUserId = getCurrentUserId();
-  if (hasApi() && hasAuth() && currentUserId && state.syncQueue?.length) {
-    for (const item of [...state.syncQueue]) {
-      if (item.userId !== currentUserId) continue;
-      const result = await syncSession(item.session);
-      if (!result.ok) {
-        if (result.authRequired) {
-          clearAuth();
-          announce("Cloud session expired. Sign in again to sync your pending workouts.");
-        } else if (result.retryable === false) {
-          announce("Cloud sync rejected a pending workout. Your local record remains safe; fix the account or data issue before retrying.");
-        } else {
-          announce("Cloud sync is temporarily unavailable. Pending workouts remain queued.");
+  if (syncFlushRunning) return;
+  syncFlushRunning = true;
+  try {
+    const currentUserId = getCurrentUserId();
+    if (hasApi() && hasAuth() && currentUserId && state.syncQueue?.length) {
+      for (const item of getDueSyncItems(state.syncQueue)) {
+        if (item.userId !== currentUserId) continue;
+        const result = await syncSession(item.session);
+        if (!result.ok) {
+          const previousQueue = state.syncQueue;
+          const kind = result.authRequired ? "auth" : result.retryable === false ? "permanent" : "transient";
+          const reason = result.message || "Cloud sync failed.";
+          const nextQueue = recordSyncFailure(state.syncQueue, item.session.id, { kind, reason });
+
+          if (!persistQueueAfterFailure(
+            nextQueue,
+            previousQueue,
+            "Cloud sync failed and retry state could not be saved locally. Export your local data and retry when storage recovers."
+          )) break;
+
+          if (result.authRequired) {
+            clearAuth();
+            announce("Cloud session expired. Sign in again to sync your pending workouts.");
+          } else if (result.retryable === false) {
+            announce("Cloud sync rejected a pending workout. It remains safely queued and is blocked from automatic retries until explicitly retried.");
+          } else {
+            const updated = state.syncQueue.find((entry) => entry.session.id === item.session.id);
+            announce("Cloud sync is temporarily unavailable. Pending workout remains queued; retry " + (updated?.attempts || 1) + " scheduled with backoff.");
+          }
+          break;
         }
-        break;
-      }
-      const previousQueue = state.syncQueue;
-      state.syncQueue = removeSyncItem(state.syncQueue, item.session.id);
-      if (!save()) {
-        state.syncQueue = previousQueue;
-        announce("Cloud sync succeeded, but the pending queue could not be saved locally. It remains pending for this account.");
-        break;
+
+        const previousQueue = state.syncQueue;
+        state.syncQueue = removeSyncItem(state.syncQueue, item.session.id);
+        if (!save()) {
+          state.syncQueue = previousQueue;
+          announce("Cloud sync succeeded, but the pending queue could not be saved locally. The cloud copy is safe and replay remains idempotent.");
+          break;
+        }
       }
     }
+    await refreshCloudHistory();
+  } finally {
+    syncFlushRunning = false;
+    scheduleSyncRetry();
   }
-  await refreshCloudHistory();
 }
 
 function todayLabel() {
