@@ -222,3 +222,31 @@ test("refreshes the access session once after a protected 401 and retries the re
     globalThis.__GYM_CONFIG__ = originalConfig;
   }
 });
+test("uses credentialed cookie transport instead of browser token storage", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalStorageDescriptor = installStorage(new Map());
+  const originalConfig = globalThis.__GYM_CONFIG__;
+  globalThis.__GYM_CONFIG__ = { apiBaseUrl:"https://api.example.test" };
+  let seen = null;
+  globalThis.fetch = async (_url, options) => {
+    seen = options;
+    return new Response(JSON.stringify({ sessions:[], nextCursor:null }), {
+      status:200,
+      headers:{ "content-type":"application/json" }
+    });
+  };
+
+  try {
+    const module = await import("../src/api.js?cookie-transport-test=" + Date.now());
+    module.setAuthSession("short-lived-access-token", "123e4567-e89b-12d3-a456-426614174000");
+    const result = await module.listCloudSessions(20);
+    assert.equal(result.ok,true);
+    assert.equal(seen.credentials,"include");
+    assert.match(seen.headers.authorization,/^Bearer /);
+    assert.equal(globalThis.sessionStorage.getItem("gym:access-token"),null);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreStorage(originalStorageDescriptor);
+    globalThis.__GYM_CONFIG__ = originalConfig;
+  }
+});
