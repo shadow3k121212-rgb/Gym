@@ -41,8 +41,65 @@ paths:
                 email: { type: string, format: email }
                 password: { type: string, minLength: 12, maxLength: 128 }
       responses:
-        "200": { description: Authenticated }
+        "200": { description: Authenticated; refresh cookie issued }
         "401": { description: Invalid credentials }
+  /v1/auth/refresh:
+    post:
+      operationId: refreshAuth
+      responses:
+        "200": { description: Rotated access and refresh session }
+        "401": { description: Invalid, expired, revoked, or reused refresh session }
+  /v1/auth/logout:
+    post:
+      operationId: logout
+      responses:
+        "204": { description: Session logged out and refresh cookie cleared }
+  /v1/auth/logout-all:
+    post:
+      security: [{ bearerAuth: [] }]
+      operationId: logoutAll
+      responses:
+        "200":
+          description: All auth sessions revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revoked]
+                properties:
+                  revoked: { type: integer, minimum: 0 }
+        "401": { description: Authentication required }
+  /v1/auth/sessions:
+    get:
+      security: [{ bearerAuth: [] }]
+      operationId: listAuthSessions
+      responses:
+        "200":
+          description: Account auth sessions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sessions]
+                properties:
+                  sessions:
+                    type: array
+                    items: { $ref: "#/components/schemas/AuthSession" }
+        "401": { description: Authentication required }
+  /v1/auth/sessions/{sessionId}:
+    delete:
+      security: [{ bearerAuth: [] }]
+      operationId: revokeAuthSession
+      parameters:
+        - in: path
+          name: sessionId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Session revoked }
+        "400": { description: Invalid session id }
+        "404": { description: Session not found }
+        "401": { description: Authentication required }
   /v1/ready:
     get:
       operationId: ready
@@ -121,6 +178,16 @@ components:
       type: http
       scheme: bearer
   schemas:
+    AuthSession:
+      type: object
+      required: [id, created_at, expires_at, last_seen_at, revoked_at]
+      properties:
+        id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        last_seen_at: { type: string, format: date-time }
+        revoked_at: { type: string, format: date-time, nullable: true }
+        revocation_reason: { type: string, nullable: true }
     SessionSummary:
       type: object
       required: [id, name, source, started_at, completed_at, volume, completed_sets]
