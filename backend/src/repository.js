@@ -156,6 +156,13 @@ export class PostgresRepository {
     return result.rows[0] ?? null;
   }
 
+  async touchAuthSession(sessionId, userId) {
+    await this.pool.query(
+      "update auth_sessions set last_seen_at=now() where id=$1 and user_id=$2 and revoked_at is null",
+      [sessionId,userId]
+    );
+  }
+
   async rotateAuthSession(tokenHash, replacement) {
     const client = await this.pool.connect();
     try {
