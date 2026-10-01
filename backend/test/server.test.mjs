@@ -649,6 +649,24 @@ test("password reset requests do not enumerate accounts and reset tokens are one
   assert.equal(oldAccess.status,401);
 });
 
+test("auth session listing distinguishes expired sessions from active sessions", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"expired-session@example.com",password:"correct horse battery staple"})
+  });
+  const sessionId = JSON.parse(Buffer.from(registered.body.accessToken.split(".")[1], "base64url").toString("utf8")).sid;
+  const session = testServer.repo.authSessions.get(sessionId);
+  assert.ok(session);
+  session.expires_at = new Date(Date.now() - 1000).toISOString();
+
+  const list = await request(testServer.base, "/v1/auth/sessions", {
+    headers:{authorization:`Bearer ${registered.body.accessToken}`}
+  });
+  assert.equal(list.status,401);
+});
 test("password reset invalidates every active device session", async (t) => {
   const testServer = await makeServer();
   t.after(() => testServer.server.close());
@@ -792,6 +810,7 @@ test("session management marks the current session and exposes revocation state"
   assert.equal(list.status,200);
   assert.equal(list.body.sessions.length,2);
   assert.equal(list.body.sessions.filter((session) => session.isCurrent).length,1);
+  assert.equal(list.body.sessions.filter((session) => session.status === "active").length,2);
   assert.equal(list.body.sessions.filter((session) => !session.revoked_at).length,2);
   assert.notEqual(second.body.accessToken, first.body.accessToken);
 });
