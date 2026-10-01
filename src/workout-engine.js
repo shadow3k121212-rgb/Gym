@@ -8,10 +8,17 @@ export function calculateVolume(sets) {
   return sets.reduce((total, set) => total + calculateSetVolume(set), 0);
 }
 
+function completedCount(exercise) {
+  const sets = exercise.sets || [];
+  if (sets.some((set) => typeof set.completed === "boolean")) {
+    return sets.filter((set) => set.completed).length;
+  }
+  return Number(exercise.completedSets ?? sets.length ?? 0);
+}
+
 export function calculateCompletion(exercises) {
   const planned = exercises.reduce((total, exercise) => total + Number(exercise.targetSets || 0), 0);
-  const completed = exercises.reduce((total, exercise) =>
-    total + (exercise.sets || []).filter((set) => set.completed).length, 0);
+  const completed = exercises.reduce((total, exercise) => total + completedCount(exercise), 0);
   return planned === 0 ? 0 : clamp(completed / planned, 0, 1);
 }
 
@@ -29,15 +36,20 @@ export function suggestProgression(lastWeightKg, completedSets, targetSets, incr
 }
 
 export function summarizeSession(exercises) {
-  const sets = exercises.flatMap((exercise) => exercise.sets || []);
-  const completedSets = sets.filter((set) => set.completed);
+  const allSets = exercises.flatMap((exercise) => exercise.sets || []);
+  const hasExplicitCompletion = allSets.some((set) => typeof set.completed === "boolean");
+  const completedSets = hasExplicitCompletion
+    ? allSets.filter((set) => set.completed)
+    : allSets;
+  const totalSets = exercises.reduce((total, exercise) =>
+    total + Number(exercise.targetSets ?? (exercise.sets || []).length), 0);
   return {
     volumeKg: calculateVolume(completedSets),
-    totalSets: sets.length,
+    totalSets,
     completedSets: completedSets.length,
     completedExercises: exercises.filter((exercise) =>
-      (exercise.sets || []).length > 0 && exercise.sets.every((set) => set.completed)).length,
-    completion: calculateCompletion(exercises),
+      Number(exercise.targetSets || 0) > 0 && completedCount(exercise) >= Number(exercise.targetSets)).length,
+    completion: totalSets === 0 ? 0 : clamp(completedSets.length / totalSets, 0, 1),
     estimatedOneRepMaxKg: Math.max(0, ...completedSets.map((set) => estimateOneRepMax(set.weightKg, set.reps)))
   };
 }
