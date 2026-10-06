@@ -53,9 +53,13 @@ test("emits a safe browser event without exposing identifiers or workout payload
   resetSyncMetrics();
   const seen = [];
   const target = new EventTarget();
+  const previousWindow = globalThis.window;
+  globalThis.window = target;
   const unsubscribe = subscribeSyncOutcomes((detail) => seen.push(detail), target);
   recordSyncOutcome("success", { status: 201, attempt: 1, queueDepth: 3, durationMs: 42 });
   unsubscribe();
+  if (previousWindow === undefined) delete globalThis.window;
+  else globalThis.window = previousWindow;
 
   assert.equal(seen.length, 1);
   assert.deepEqual(seen[0], {
