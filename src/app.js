@@ -19,14 +19,14 @@ import {
   retrySyncItem
 } from "./sync-queue.js";
 import { recordSyncOutcome } from "./sync-observability.js";
+import { createSyncCoordinator } from "./sync-coordinator.js";
+import { wireSyncLifecycle } from "./sync-lifecycle.js";
 
 const REST_SECONDS = 90;
 let state = loadState();
 let restTimer = null;
 let restRemaining = 0;
 let lastSetAction = null;
-let syncFlushRunning = false;
-let syncRetryTimer = null;
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -122,18 +122,6 @@ function retryPendingSync(sessionId) {
   return Promise.resolve({ ok:true });
 }
 
-function scheduleSyncRetry() {
-  if (syncRetryTimer) clearTimeout(syncRetryTimer);
-  syncRetryTimer = null;
-  const nextRetryAt = getNextSyncRetryAt(state.syncQueue);
-  if (!nextRetryAt) return;
-  const delay = Math.max(0, Math.min(2147483647, nextRetryAt - Date.now()));
-  syncRetryTimer = setTimeout(() => {
-    syncRetryTimer = null;
-    void flushSyncQueue();
-  }, delay);
-}
-
 function persistQueueAfterFailure(nextQueue, fallbackQueue, message) {
   state.syncQueue = nextQueue;
   if (save()) return true;
@@ -142,16 +130,12 @@ function persistQueueAfterFailure(nextQueue, fallbackQueue, message) {
   return false;
 }
 
-async function flushSyncQueue() {
-  if (syncFlushRunning) return;
-  syncFlushRunning = true;
-  try {
+async function performSyncFlush() {
     const currentUserId = getCurrentUserId();
     if (hasApi() && hasAuth() && currentUserId && state.syncQueue?.length) {
       for (const item of getDueSyncItems(state.syncQueue)) {
         if (item.userId !== currentUserId) continue;
         const startedAt = Date.now();
-        const queueDepthBefore = state.syncQueue.length;
         const result = await syncSession(item.session);
         if (!result.ok) {
           const previousQueue = state.syncQueue;
@@ -208,10 +192,15 @@ async function flushSyncQueue() {
       }
     }
     await refreshCloudHistory();
-  } finally {
-    syncFlushRunning = false;
-    scheduleSyncRetry();
-  }
+}
+
+const syncCoordinator = createSyncCoordinator({
+  flush: performSyncFlush,
+  getNextRetryAt: () => getNextSyncRetryAt(state.syncQueue)
+});
+
+function flushSyncQueue() {
+  return syncCoordinator.run();
 }
 
 function todayLabel() {
@@ -883,13 +872,12 @@ if ("serviceWorker" in navigator) {
 }
 
 render();
-window.addEventListener("online", () => {
-  void (async () => {
-    if (!hasAuth()) await refreshAuth();
-    await flushSyncQueue();
-  })();
+wireSyncLifecycle({
+  target: window,
+  hasAuth,
+  refreshAuth,
+  flushSyncQueue
 });
-window.addEventListener("gym:auth-changed", () => { void flushSyncQueue(); });
 
 void (async () => {
   if (!hasApi()) return;
