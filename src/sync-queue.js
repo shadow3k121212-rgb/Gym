@@ -66,7 +66,7 @@ export function getSyncRetryDelayMs(attempt, random = Math.random) {
   const safeAttempt = Math.max(1, normalizeAttempts(attempt));
   const ceiling = Math.min(MAX_RETRY_DELAY_MS, BASE_RETRY_DELAY_MS * (2 ** Math.min(12, safeAttempt - 1)));
   const sample = typeof random === "function" ? Number(random()) : 0.5;
-  const jitter = Number.isFinite(sample) ? Math.max(0, Math.min(0.999999, sample)) : 0.5;
+  const jitter = Number.isFinite(sample) ? Math.max(0, Math.min(1, sample)) : 0.5;
   return Math.max(1, Math.floor(ceiling * jitter));
 }
 
@@ -82,7 +82,8 @@ export function getDueSyncItems(queue, nowMs = Date.now()) {
 export function recordSyncFailure(queue, sessionId, {
   kind = "transient",
   reason = "sync-failed",
-  nowMs = Date.now()
+  nowMs = Date.now(),
+  random = Math.random
 } = {}) {
   const normalized = normalizeSyncQueue(queue);
   const now = Number.isFinite(nowMs) ? nowMs : Date.now();
@@ -99,7 +100,7 @@ export function recordSyncFailure(queue, sessionId, {
     return {
       ...item,
       attempts,
-      nextAttemptAt:new Date(now + getSyncRetryDelayMs(attempts)).toISOString(),
+      nextAttemptAt:new Date(now + getSyncRetryDelayMs(attempts, random)).toISOString(),
       lastError,
       blocked:false
     };
