@@ -112,6 +112,9 @@ function renderSyncRecovery(state) {
             <div>
               <strong>${escapeHtml(item.session.name || "Workout")}</strong>
               <span class="micro-note">${escapeHtml(item.lastError || "Manual retry required.")}</span>
+              <span class="micro-note">${item.lastAttemptAt
+                ? "Last attempt " + escapeHtml(new Date(item.lastAttemptAt).toLocaleString("en-IN"))
+                : "Not attempted yet"} · ${item.attempts || 0} automatic retry attempts</span>
             </div>
             <button class="text-button" data-retry-sync="${escapeHtml(item.session.id)}">Retry</button>
           </div>`).join("") : ""}
