@@ -40,7 +40,7 @@ export function createSyncCoordinator({
         schedule();
       });
 
-    return inFlight.then(() => true);
+    return inFlight;
   }
 
   function cancel() {
