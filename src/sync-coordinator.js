@@ -25,7 +25,7 @@ export function createSyncCoordinator({
     const delay = Math.max(0, Math.min(MAX_TIMER_DELAY_MS, nextRetryAt - Number(now())));
     retryTimer = setTimer(() => {
       retryTimer = null;
-      void run();
+      return run();
     }, delay);
   }
 
