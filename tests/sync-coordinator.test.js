@@ -29,10 +29,9 @@ test("coalesces concurrent flush triggers and schedules one future retry", async
   assert.equal(timers[0].delay, 200);
 
   const firstTimer = timers[0];
-  firstTimer.callback();
+  const timerRun = firstTimer.callback();
   timers.splice(0, 1);
-  await Promise.resolve();
-  await Promise.resolve();
+  await timerRun;
   assert.equal(flushCalls, 2);
   assert.equal(timers.length, 1);
   assert.equal(timers[0].delay, 200);
