@@ -167,7 +167,9 @@ Status: IN PROGRESS.
 Completed slices:
 - durable sync retry metadata with attempts, next-at timestamps, last-error retention, and blocked-state retention for permanent failures
 - account/settings recovery UI exposes authenticated pending work, manual retry for blocked work, and separate local-only handling for unowned legacy queue records
-- bounded exponential backoff (5 seconds to 15 minutes) for transient sync failures
+- bounded exponential backoff with jitter (5 seconds ceiling growth to 15 minutes) for transient sync failures
+- automatic transient retry attempts are bounded at 12; exhausted work remains retained but becomes blocked for explicit manual retry
+- concurrent protected-request refreshes are deduplicated so online/auth bursts do not multiply refresh rotations
 - authentication failures remain immediately retryable after re-authentication
 - retry-reset primitive plus account/settings UI manual retry path for blocked retained workouts
 - overlapping sync flushes are prevented; scheduled retries wake when the next due item becomes eligible
@@ -181,6 +183,8 @@ Verification evidence:
 - CI run #392 passed on continuity checkpoint head `25f68698ed7f40eb948e556a347d0bbe86827186`.
 - CI run #399 passed on combined retry-storage-recovery head `f209ddafacb94ac7ebbf75297c46862fe2a540b1`.
 - CI run #403 passed on latest Phase 4 recovery UI head `5d8f7aabfd7833550f87f3488bf9ae8f40361b39`.
+- CI runs #415/#416 passed on jittered-backoff + concurrent-refresh regression head `e28d80212b02c6d6c0f7ec6ece4bd299f6ccc686`.
+- CI run #419 passed on bounded automatic retry-exhaustion head `e89af2694b569711621b7804e48b87c44e38a2ba`.
 - These CI runs passed unit/API tests, PostgreSQL migrations + schema verification, HTTP smoke, dependency audit, static checks, production build, and output verification.
 
 Next Phase 4 implementation slice:
