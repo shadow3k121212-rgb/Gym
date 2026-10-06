@@ -9,7 +9,6 @@ test("coalesces concurrent flush triggers and schedules one future retry", async
   const coordinator = createSyncCoordinator({
     flush: async () => {
       flushCalls += 1;
-      await new Promise((resolve) => setTimeout(resolve, 5));
     },
     getNextRetryAt: () => 1200,
     now: () => now,
