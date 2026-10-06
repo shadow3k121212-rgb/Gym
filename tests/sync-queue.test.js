@@ -82,7 +82,7 @@ test("transient failures persist retry state without dropping the session", () =
   const userId = "123e4567-e89b-12d3-a456-426614174000";
   const queue = enqueueSyncItem([], session("q-retry"), userId);
   const now = Date.parse("2026-10-01T00:00:00.000Z");
-  const failed = recordSyncFailure(queue, "q-retry", { kind:"transient", reason:"network", nowMs:now });
+  const failed = recordSyncFailure(queue, "q-retry", { kind:"transient", reason:"network", nowMs:now, random:() => 1 });
   assert.equal(failed.length, 1);
   assert.equal(failed[0].attempts, 1);
   assert.equal(failed[0].lastError, "network");
