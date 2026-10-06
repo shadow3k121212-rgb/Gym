@@ -70,11 +70,12 @@ test("legacy raw sessions remain preserved as unowned queue entries", () => {
   );
 });
 
-test("backoff is exponential and capped", () => {
-  assert.equal(getSyncRetryDelayMs(1), 5000);
-  assert.equal(getSyncRetryDelayMs(2), 10000);
-  assert.equal(getSyncRetryDelayMs(3), 20000);
-  assert.equal(getSyncRetryDelayMs(100), 15 * 60 * 1000);
+test("backoff uses bounded jitter and remains capped", () => {
+  assert.equal(getSyncRetryDelayMs(1, () => 0), 1);
+  assert.equal(getSyncRetryDelayMs(1, () => 0.5), 2500);
+  assert.equal(getSyncRetryDelayMs(2, () => 0.999999), 9999);
+  assert.equal(getSyncRetryDelayMs(100, () => 0.999999), 899999);
+  assert.equal(getSyncRetryDelayMs(3, () => Number.NaN), 10000);
 });
 
 test("transient failures persist retry state without dropping the session", () => {
