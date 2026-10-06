@@ -222,6 +222,55 @@ test("refreshes the access session once after a protected 401 and retries the re
     globalThis.__GYM_CONFIG__ = originalConfig;
   }
 });
+test("deduplicates concurrent access-session refreshes", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalStorageDescriptor = installStorage(new Map());
+  const originalConfig = globalThis.__GYM_CONFIG__;
+  globalThis.__GYM_CONFIG__ = { apiBaseUrl:"https://api.example.test" };
+
+  let refreshCalls = 0;
+  let protectedCalls = 0;
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith("/v1/auth/refresh")) {
+      refreshCalls += 1;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return new Response(JSON.stringify({
+        user:{ id:"123e4567-e89b-12d3-a456-426614174000" },
+        accessToken:"refreshed-token"
+      }), { status:200, headers:{ "content-type":"application/json" } });
+    }
+    protectedCalls += 1;
+    if (protectedCalls <= 2) {
+      return new Response(JSON.stringify({ error:{ message:"Authentication required." } }), {
+        status:401,
+        headers:{ "content-type":"application/json" }
+      });
+    }
+    return new Response(JSON.stringify({ sessions:[], nextCursor:null }), {
+      status:200,
+      headers:{ "content-type":"application/json" }
+    });
+  };
+
+  try {
+    const module = await import("../src/api.js?concurrent-refresh-test=" + Date.now());
+    module.setAuthSession("expired-token", "123e4567-e89b-12d3-a456-426614174000");
+    const [first, second] = await Promise.all([
+      module.listCloudSessions(20),
+      module.listCloudSessions(20)
+    ]);
+    assert.equal(first.ok, true);
+    assert.equal(second.ok, true);
+    assert.equal(refreshCalls, 1);
+    assert.equal(protectedCalls, 4);
+    assert.equal(module.hasAuth(), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreStorage(originalStorageDescriptor);
+    globalThis.__GYM_CONFIG__ = originalConfig;
+  }
+});
+
 test("uses credentialed cookie transport instead of browser token storage", async () => {
   const originalFetch = globalThis.fetch;
   const originalStorageDescriptor = installStorage(new Map());
