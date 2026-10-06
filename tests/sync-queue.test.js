@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { enqueueSyncItem, getDueSyncItems, getNextSyncRetryAt, getSyncRetryDelayMs, normalizeSyncQueue, recordSyncFailure, removeSyncItem, retrySyncItem } from "../src/sync-queue.js";
+import { enqueueSyncItem, getDueSyncItems, getMaxAutomaticRetryAttempts, getNextSyncRetryAt, getSyncRetryDelayMs, normalizeSyncQueue, recordSyncFailure, removeSyncItem, retrySyncItem } from "../src/sync-queue.js";
 
 const session = (id, name = id) => ({ id, name });
 
@@ -111,4 +111,22 @@ test("permanent sync failures stay retained but blocked until explicitly retried
   assert.equal(retried[0].blocked, false);
   assert.equal(retried[0].attempts, 0);
   assert.equal(getDueSyncItems(retried, 0).length, 1);
+});
+
+test("exhausted transient retries become blocked without deleting local work", () => {
+  const queue = enqueueSyncItem([], session("q-exhausted"));
+  let current = queue;
+  for (let attempt = 0; attempt < getMaxAutomaticRetryAttempts(); attempt += 1) {
+    current = recordSyncFailure(current, "q-exhausted", {
+      kind:"transient",
+      reason:"service-unavailable",
+      nowMs:0,
+      random:() => 1
+    });
+  }
+  assert.equal(current.length, 1);
+  assert.equal(current[0].attempts, getMaxAutomaticRetryAttempts());
+  assert.equal(current[0].blocked, true);
+  assert.equal(current[0].nextAttemptAt, null);
+  assert.equal(current[0].lastError, "retry-exhausted:service-unavailable");
 });
