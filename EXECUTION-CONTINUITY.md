@@ -176,6 +176,8 @@ Completed slices:
 - retry metadata survives browser reload/state normalization without being stripped by storage migration
 - structured HTTP request telemetry records request ID, method, route, status, and duration without credential material
 - password-recovery delivery is bounded by a 5-second outbound timeout so a slow webhook cannot hold the request indefinitely
+- durable sync `lastAttemptAt` timestamps survive browser reload and are surfaced in recovery UI for operational visibility
+- bounded sync outcome telemetry exposes only fixed enums plus coarse status classes, bounded retry/queue values, and duration; no user ID, session ID, or workout payload is emitted
 
 Verification evidence:
 - CI run #387 passed on retry-layer head `7c000ffa6ea63525aa60f131ccfb67f748f38618`.
@@ -185,9 +187,10 @@ Verification evidence:
 - CI run #403 passed on latest Phase 4 recovery UI head `5d8f7aabfd7833550f87f3488bf9ae8f40361b39`.
 - CI runs #415/#416 passed on jittered-backoff + concurrent-refresh regression head `e28d80212b02c6d6c0f7ec6ece4bd299f6ccc686`.
 - CI run #419 passed on bounded automatic retry-exhaustion head `e89af2694b569711621b7804e48b87c44e38a2ba`.
+- Firecrawl developer research was used to validate bounded metric dimensions and avoid user/session identifiers in production metric attributes.
 - These CI runs passed unit/API tests, PostgreSQL migrations + schema verification, HTTP smoke, dependency audit, static checks, production build, and output verification.
 
 Next Phase 4 implementation slice:
-- add targeted client tests for scheduled retry/online/auth-event interaction and verify no duplicate flush side effects
-- extend observability with bounded sync outcome counters suitable for centralized production metrics, without collecting workout payloads
-- define operational retention/cleanup and recovery reporting for long-lived pending sync records.
+- targeted client tests for scheduled retry/online/auth-event interaction and explicit duplicate-flush prevention remain the next reliability slice
+- centralized sync outcome counters are now represented by a bounded browser telemetry contract, ready for a future production exporter without changing the event schema
+- pending sync recovery now records `lastAttemptAt`; retention/cleanup policy remains a deployment-level control for a future persisted outbox implementation.
