@@ -16,9 +16,9 @@ test("normalizes queue entries, preserves all durable work, and deduplicates by 
   ];
   const normalized = normalizeSyncQueue(input);
   assert.deepEqual(normalized, [
-    { userId, session:session("q-1", "latest"), attempts:0, nextAttemptAt:null, lastError:null, blocked:false },
-    { userId, session:session("q-2", "second"), attempts:0, nextAttemptAt:null, lastError:null, blocked:false },
-    { userId:null, session:session("q-25", "twenty-five"), attempts:0, nextAttemptAt:null, lastError:null, blocked:false }
+    { userId, session:session("q-1", "latest"), attempts:0, nextAttemptAt:null, lastAttemptAt:null, lastError:null, blocked:false },
+    { userId, session:session("q-2", "second"), attempts:0, nextAttemptAt:null, lastAttemptAt:null, lastError:null, blocked:false },
+    { userId:null, session:session("q-25", "twenty-five"), attempts:0, nextAttemptAt:null, lastAttemptAt:null, lastError:null, blocked:false }
   ]);
 
   const many = normalizeSyncQueue(Array.from({ length: 25 }, (_, i) => ({
@@ -36,8 +36,8 @@ test("enqueue replaces the same session without mutating the original queue", ()
   ];
   const next = enqueueSyncItem(queue, session("q-1", "updated"), userId);
   assert.deepEqual(next, [
-    { userId, session:session("q-2", "two"), attempts:0, nextAttemptAt:null, lastError:null, blocked:false },
-    { userId, session:session("q-1", "updated"), attempts:0, nextAttemptAt:null, lastError:null, blocked:false }
+    { userId, session:session("q-2", "two"), attempts:0, nextAttemptAt:null, lastAttemptAt:null, lastError:null, blocked:false },
+    { userId, session:session("q-1", "updated"), attempts:0, nextAttemptAt:null, lastAttemptAt:null, lastError:null, blocked:false }
   ]);
   assert.deepEqual(queue, [
     { userId, session:session("q-1", "one") },
@@ -52,21 +52,21 @@ test("remove deletes only the requested session", () => {
     { userId:null, session:session("q-3") }
   ];
   assert.deepEqual(removeSyncItem(queue, "q-2"), [
-    { userId:null, session:session("q-1"), attempts:0, nextAttemptAt:null, lastError:null, blocked:false },
-    { userId:null, session:session("q-3"), attempts:0, nextAttemptAt:null, lastError:null, blocked:false }
+    { userId:null, session:session("q-1"), attempts:0, nextAttemptAt:null, lastAttemptAt:null, lastError:null, blocked:false },
+    { userId:null, session:session("q-3"), attempts:0, nextAttemptAt:null, lastAttemptAt:null, lastError:null, blocked:false }
   ]);
   assert.deepEqual(removeSyncItem(queue, "missing"), normalizeSyncQueue(queue));
 });
 
 test("invalid owner ids are treated as unowned and cannot be adopted implicitly", () => {
   const queue = enqueueSyncItem([], session("q-1"), "not-a-user-id");
-  assert.deepEqual(queue, [{ userId:null, session:session("q-1"), attempts:0, nextAttemptAt:null, lastError:null, blocked:false }]);
+  assert.deepEqual(queue, [{ userId:null, session:session("q-1"), attempts:0, nextAttemptAt:null, lastAttemptAt:null, lastError:null, blocked:false }]);
 });
 
 test("legacy raw sessions remain preserved as unowned queue entries", () => {
   assert.deepEqual(
     normalizeSyncQueue([session("legacy-1")]),
-    [{ userId:null, session:session("legacy-1"), attempts:0, nextAttemptAt:null, lastError:null, blocked:false }]
+    [{ userId:null, session:session("legacy-1"), attempts:0, nextAttemptAt:null, lastAttemptAt:null, lastError:null, blocked:false }]
   );
 });
 
@@ -86,6 +86,7 @@ test("transient failures persist retry state without dropping the session", () =
   assert.equal(failed.length, 1);
   assert.equal(failed[0].attempts, 1);
   assert.equal(failed[0].lastError, "network");
+  assert.equal(failed[0].lastAttemptAt, "2026-10-01T00:00:00.000Z");
   assert.equal(failed[0].blocked, false);
   assert.equal(failed[0].nextAttemptAt, "2026-10-01T00:00:05.000Z");
   assert.equal(getNextSyncRetryAt(failed), Date.parse("2026-10-01T00:00:05.000Z"));
@@ -106,6 +107,7 @@ test("permanent sync failures stay retained but blocked until explicitly retried
   const blocked = recordSyncFailure(queue, "q-blocked", { kind:"permanent", reason:"conflict", nowMs:0 });
   assert.equal(blocked[0].blocked, true);
   assert.equal(blocked[0].lastError, "conflict");
+  assert.equal(blocked[0].lastAttemptAt, "1970-01-01T00:00:00.000Z");
   assert.equal(getDueSyncItems(blocked, Number.MAX_SAFE_INTEGER).length, 0);
   const retried = retrySyncItem(blocked, "q-blocked");
   assert.equal(retried[0].blocked, false);
@@ -129,4 +131,5 @@ test("exhausted transient retries become blocked without deleting local work", (
   assert.equal(current[0].blocked, true);
   assert.equal(current[0].nextAttemptAt, null);
   assert.equal(current[0].lastError, "retry-exhausted:service-unavailable");
+  assert.equal(current[0].lastAttemptAt, "1970-01-01T00:00:00.000Z");
 });
