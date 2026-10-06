@@ -1,6 +1,7 @@
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const BASE_RETRY_DELAY_MS = 5 * 1000;
 const MAX_RETRY_DELAY_MS = 15 * 60 * 1000;
+const MAX_AUTOMATIC_RETRY_ATTEMPTS = 12;
 
 function normalizeOwnerId(value) {
   return typeof value === "string" && UUID_PATTERN.test(value) ? value.toLowerCase() : null;
@@ -97,6 +98,15 @@ export function recordSyncFailure(queue, sessionId, {
       return { ...item, nextAttemptAt:null, lastError, blocked:true };
     }
     const attempts = item.attempts + 1;
+    if (attempts >= MAX_AUTOMATIC_RETRY_ATTEMPTS) {
+      return {
+        ...item,
+        attempts,
+        nextAttemptAt:null,
+        lastError:"retry-exhausted:" + lastError,
+        blocked:true
+      };
+    }
     return {
       ...item,
       attempts,
@@ -113,6 +123,10 @@ export function retrySyncItem(queue, sessionId) {
       ? { ...item, attempts:0, nextAttemptAt:null, lastError:null, blocked:false }
       : item
   );
+}
+
+export function getMaxAutomaticRetryAttempts() {
+  return MAX_AUTOMATIC_RETRY_ATTEMPTS;
 }
 
 export function getNextSyncRetryAt(queue) {
