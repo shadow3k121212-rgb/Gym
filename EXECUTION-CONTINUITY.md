@@ -187,6 +187,7 @@ Verification evidence:
 - CI run #403 passed on latest Phase 4 recovery UI head `5d8f7aabfd7833550f87f3488bf9ae8f40361b39`.
 - CI runs #415/#416 passed on jittered-backoff + concurrent-refresh regression head `e28d80212b02c6d6c0f7ec6ece4bd299f6ccc686`.
 - CI run #419 passed on bounded automatic retry-exhaustion head `e89af2694b569711621b7804e48b87c44e38a2ba`.
+- CI run #437 passed on exact sync observability/recovery head `44c3c2a070acbbb631ed5913c8e3981acf870d51`; all configured test, migration, smoke, audit, static-check, build, and output-verification stages passed.
 - Firecrawl developer research was used to validate bounded metric dimensions and avoid user/session identifiers in production metric attributes.
 - These CI runs passed unit/API tests, PostgreSQL migrations + schema verification, HTTP smoke, dependency audit, static checks, production build, and output verification.
 
