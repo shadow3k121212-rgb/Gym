@@ -18,6 +18,13 @@ function normalizeRetryAt(value) {
   return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
 }
 
+function normalizeLastAttemptAt(value) {
+  if (value == null) return null;
+  if (typeof value !== "string") return null;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
+}
+
 function normalizeEntry(item) {
   if (!item || typeof item !== "object") return null;
   const candidate = item.session && typeof item.session === "object" ? item.session : item;
@@ -27,6 +34,7 @@ function normalizeEntry(item) {
     session: candidate,
     attempts: normalizeAttempts(item.attempts),
     nextAttemptAt: normalizeRetryAt(item.nextAttemptAt),
+    lastAttemptAt: normalizeLastAttemptAt(item.lastAttemptAt),
     lastError: typeof item.lastError === "string" && item.lastError.length <= 200 ? item.lastError : null,
     blocked: item.blocked === true
   };
@@ -52,6 +60,7 @@ export function enqueueSyncItem(queue, session, userId = null) {
     session,
     attempts: 0,
     nextAttemptAt: null,
+    lastAttemptAt: null,
     lastError: null,
     blocked: false
   });
@@ -91,11 +100,12 @@ export function recordSyncFailure(queue, sessionId, {
   return normalized.map((item) => {
     if (item.session.id !== sessionId) return item;
     const lastError = typeof reason === "string" ? reason.slice(0, 200) : "sync-failed";
+    const lastAttemptAt = new Date(now).toISOString();
     if (kind === "auth") {
-      return { ...item, nextAttemptAt:null, lastError, blocked:false };
+      return { ...item, nextAttemptAt:null, lastAttemptAt, lastError, blocked:false };
     }
     if (kind === "permanent") {
-      return { ...item, nextAttemptAt:null, lastError, blocked:true };
+      return { ...item, nextAttemptAt:null, lastAttemptAt, lastError, blocked:true };
     }
     const attempts = item.attempts + 1;
     if (attempts >= MAX_AUTOMATIC_RETRY_ATTEMPTS) {
@@ -103,6 +113,7 @@ export function recordSyncFailure(queue, sessionId, {
         ...item,
         attempts,
         nextAttemptAt:null,
+        lastAttemptAt,
         lastError:"retry-exhausted:" + lastError,
         blocked:true
       };
@@ -111,6 +122,7 @@ export function recordSyncFailure(queue, sessionId, {
       ...item,
       attempts,
       nextAttemptAt:new Date(now + getSyncRetryDelayMs(attempts, random)).toISOString(),
+      lastAttemptAt,
       lastError,
       blocked:false
     };
