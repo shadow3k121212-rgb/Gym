@@ -61,4 +61,5 @@ test("reuses the same in-flight promise for callers", async () => {
   release();
   await first;
   assert.equal(flushCalls, 1);
+  coordinator.cancel();
 });
