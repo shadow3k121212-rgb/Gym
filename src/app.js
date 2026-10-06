@@ -18,6 +18,7 @@ import {
   removeSyncItem,
   retrySyncItem
 } from "./sync-queue.js";
+import { recordSyncOutcome } from "./sync-observability.js";
 
 const REST_SECONDS = 90;
 let state = loadState();
@@ -116,6 +117,7 @@ function retryPendingSync(sessionId) {
     state.syncQueue = previousQueue;
     return Promise.resolve({ ok:false, message:"Pending retry could not be saved on this device." });
   }
+  recordSyncOutcome("manual_retry", { queueDepth: state.syncQueue.length });
   void flushSyncQueue();
   return Promise.resolve({ ok:true });
 }
@@ -148,6 +150,8 @@ async function flushSyncQueue() {
     if (hasApi() && hasAuth() && currentUserId && state.syncQueue?.length) {
       for (const item of getDueSyncItems(state.syncQueue)) {
         if (item.userId !== currentUserId) continue;
+        const startedAt = Date.now();
+        const queueDepthBefore = state.syncQueue.length;
         const result = await syncSession(item.session);
         if (!result.ok) {
           const previousQueue = state.syncQueue;
@@ -161,13 +165,28 @@ async function flushSyncQueue() {
             "Cloud sync failed and retry state could not be saved locally. Export your local data and retry when storage recovers."
           )) break;
 
+          const updated = state.syncQueue.find((entry) => entry.session.id === item.session.id);
+          const outcome = kind === "auth"
+            ? "auth_failure"
+            : kind === "permanent"
+              ? "permanent_failure"
+              : updated?.blocked
+                ? "retry_exhausted"
+                : "transient_failure";
+          recordSyncOutcome(outcome, {
+            status: result.status,
+            attempt: updated?.attempts ?? item.attempts,
+            queueDepth: state.syncQueue.length,
+            blocked: updated?.blocked === true,
+            durationMs: Date.now() - startedAt
+          });
+
           if (result.authRequired) {
             clearAuth();
             announce("Cloud session expired. Sign in again to sync your pending workouts.");
           } else if (result.retryable === false) {
             announce("Cloud sync rejected a pending workout. It remains safely queued and is blocked from automatic retries until explicitly retried.");
           } else {
-            const updated = state.syncQueue.find((entry) => entry.session.id === item.session.id);
             announce("Cloud sync is temporarily unavailable. Pending workout remains queued; retry " + (updated?.attempts || 1) + " scheduled with backoff.");
           }
           break;
@@ -178,8 +197,14 @@ async function flushSyncQueue() {
         if (!save()) {
           state.syncQueue = previousQueue;
           announce("Cloud sync succeeded, but the pending queue could not be saved locally. The cloud copy is safe and replay remains idempotent.");
-          break;
         }
+        recordSyncOutcome("success", {
+          status: result.status,
+          attempt: item.attempts,
+          queueDepth: state.syncQueue.length,
+          durationMs: Date.now() - startedAt
+        });
+        if (state.syncQueue.some((entry) => entry.session.id === item.session.id)) break;
       }
     }
     await refreshCloudHistory();
