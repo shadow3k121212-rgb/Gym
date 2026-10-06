@@ -88,6 +88,7 @@ test("persists durable sync retry metadata across reloads", () => {
       session,
       attempts:3,
       nextAttemptAt:retryAt,
+      lastAttemptAt:"2026-10-01T09:59:00.000Z",
       lastError:"network unavailable",
       blocked:false
     }],
@@ -99,6 +100,7 @@ test("persists durable sync retry metadata across reloads", () => {
     session,
     attempts:3,
     nextAttemptAt:retryAt,
+    lastAttemptAt:"2026-10-01T09:59:00.000Z",
     lastError:"network unavailable",
     blocked:false
   }]);
