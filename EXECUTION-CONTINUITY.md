@@ -219,10 +219,14 @@ First implementation slice:
 - deterministic personal workspace provisioning/backfill for existing and new accounts
 - authenticated workspace list/create APIs, with strict name/slug validation and duplicate-slug conflicts
 - owner membership granted transactionally when a gym workspace is created
-- sole-owner account deletion guard so a gym is not left ownerless
+- API guard plus database-level serialized trigger prevents removing the last active gym owner; concurrent deletion races have a DB invariant
 - explicit privacy rule: membership does not grant access to another athlete's sessions; invitation/team-sharing and tenant-scoped workout access remain separate slices
-- updated OpenAPI and schema-verifier contract
+- updated OpenAPI and schema-verifier contract, including trigger verification
+- workspace-name/slug normalization tests and sole-owner/multi-owner account-deletion coverage
 
 Current tenant model decision and next slices: see `TENANCY-ARCHITECTURE.md`.
+
+Verification evidence:
+- CI run #477 passed on exact tenant-foundation head `cf9f9b88bd6e3b86886e226e2ad624b4df1c54af`: tests, migrations/schema verification (including migration 011 owner trigger), HTTP smoke, dependency audit, static checks and production build/output verification all passed. Run: https://github.com/shadow3k121212-rgb/Gym/actions/runs/37920149021.
 
 Phase 5 status: IN PROGRESS; do not treat GYM as production-ready multi-tenant until invitation/ownership transfer and tenant-scoped workout authorization are implemented and tested.
