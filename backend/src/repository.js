@@ -48,6 +48,54 @@ export class PostgresRepository {
     return result.rows[0] ?? null;
   }
 
+  async listTenantsForUser(userId) {
+    const result = await this.pool.query(
+      `select t.id,t.name,t.slug,t.kind,t.status as tenant_status,
+        tm.role,tm.status as membership_status,t.created_at
+       from tenant_memberships tm
+       join tenants t on t.id=tm.tenant_id
+       where tm.user_id=$1 and tm.status='active' and t.status='active'
+       order by case when t.kind='personal' then 0 else 1 end, t.created_at asc, t.id asc`,
+      [userId]
+    );
+    return result.rows;
+  }
+
+  async createGymTenant(userId, { name, slug }) {
+    const client = await this.pool.connect();
+    const id = randomUUID();
+    try {
+      await client.query("begin");
+      const result = await client.query(
+        `insert into tenants (id,name,slug,kind,status,created_by_user_id)
+         values ($1,$2,$3,'gym','active',$4)
+         returning id,name,slug,kind,status as tenant_status,created_at`,
+        [id,name,slug,userId]
+      );
+      await client.query(
+        `insert into tenant_memberships (tenant_id,user_id,role,status)
+         values ($1,$2,'owner','active')`,
+        [id,userId]
+      );
+      await client.query("commit");
+      return {
+        ...result.rows[0],
+        role:"owner",
+        membership_status:"active"
+      };
+    } catch (error) {
+      await client.query("rollback");
+      if (error?.code === "23505" && error?.constraint === "tenants_slug_key") {
+        const conflict = new Error("Workspace slug already exists.");
+        conflict.code = "TENANT_SLUG_CONFLICT";
+        throw conflict;
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async createPasswordResetToken({ id, userId, tokenHash, expiresAt }) {
     const client = await this.pool.connect();
     try {
@@ -114,6 +162,26 @@ export class PostgresRepository {
     const client = await this.pool.connect();
     try {
       await client.query("begin");
+      const soleOwnership = await client.query(
+        `select t.id,t.name
+         from tenants t
+         join tenant_memberships tm on tm.tenant_id=t.id
+         where tm.user_id=$1 and tm.role='owner' and tm.status='active' and t.kind='gym'
+           and not exists (
+             select 1 from tenant_memberships other_owner
+             where other_owner.tenant_id=t.id and other_owner.role='owner'
+               and other_owner.status='active' and other_owner.user_id<>$1
+           )
+         limit 1
+         for update of t`,
+        [userId]
+      );
+      if (soleOwnership.rowCount) {
+        await client.query("rollback");
+        const error = new Error("Transfer gym workspace ownership before deleting this account.");
+        error.code = "TENANT_OWNER_REQUIRED";
+        throw error;
+      }
       const deleted = await client.query(
         "delete from users where id=$1 returning id",
         [userId]

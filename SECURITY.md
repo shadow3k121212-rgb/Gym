@@ -13,11 +13,15 @@ The current API foundation includes:
 - short-lived signed access tokens bound to revocable server-side sessions
 - rotating HttpOnly refresh sessions with reuse detection
 - per-user session authorization checks
+- additive workspace/membership schema with authenticated membership listing and gym-workspace creation
+- tenant membership results isolated to the authenticated account; current workout history APIs remain user-private
 - idempotent session writes with payload-hash conflict detection
 - request IDs, no-store/cache and baseline security headers
 - login failure throttling suitable for a single-process beta, not distributed production
 - PostgreSQL migrations and parameterized queries
 - raw camera video excluded from the API data model by default
+
+The current tenant foundation is not yet full team-sharing support: invite/accept, membership administration, ownership transfer, tenant-scoped workout authorization, billing and RLS defense-in-depth remain unimplemented. Do not grant coaches or gym administrators blanket access to members' private workout history.
 
 ## Remaining production blockers before handling real user data
 

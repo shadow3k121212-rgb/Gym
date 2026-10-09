@@ -210,4 +210,19 @@ Verification evidence:
 
 Phase 4 status: COMPLETE.
 
-Next: Phase 5 — define and implement the multi-tenant workspace/membership foundation. Existing user-owned training records remain private by default; tenant membership alone must not grant a coach or gym administrator access to an athlete's private history.
+## Phase 5 initial checkpoint — 2026-10-09
+
+Status: IN PROGRESS.
+
+First implementation slice:
+- additive tenant, tenant-membership and invitation schema
+- deterministic personal workspace provisioning/backfill for existing and new accounts
+- authenticated workspace list/create APIs, with strict name/slug validation and duplicate-slug conflicts
+- owner membership granted transactionally when a gym workspace is created
+- sole-owner account deletion guard so a gym is not left ownerless
+- explicit privacy rule: membership does not grant access to another athlete's sessions; invitation/team-sharing and tenant-scoped workout access remain separate slices
+- updated OpenAPI and schema-verifier contract
+
+Current tenant model decision and next slices: see `TENANCY-ARCHITECTURE.md`.
+
+Phase 5 status: IN PROGRESS; do not treat GYM as production-ready multi-tenant until invitation/ownership transfer and tenant-scoped workout authorization are implemented and tested.

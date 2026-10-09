@@ -24,6 +24,36 @@ export function validatePassword(value) {
   return value;
 }
 
+export function validateTenantName(value) {
+  if (typeof value !== "string") throw new ValidationError("Workspace name is required.");
+  const name = value.trim().replace(/\\s+/g, " ");
+  if (name.length < 2 || name.length > 80 || /[\\u0000-\\u001f\\u007f]/.test(name)) {
+    throw new ValidationError("Workspace name must be 2–80 printable characters.");
+  }
+  return name;
+}
+
+export function validateTenantSlug(value) {
+  if (typeof value !== "string") throw new ValidationError("Workspace slug is required.");
+  const slug = value.trim();
+  if (slug.length < 2 || slug.length > 62 || !/^[a-z0-9](?:[a-z0-9-]{0,60}[a-z0-9])$/.test(slug)) {
+    throw new ValidationError("Workspace slug must be 2–62 lowercase letters, numbers, or hyphens and start/end with a letter or number.");
+  }
+  return slug;
+}
+
+export function slugifyTenantName(value) {
+  const slug = String(value ?? "")
+    .normalize("NFKD")
+    .replace(/[\\u0300-\\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 62)
+    .replace(/-+$/g, "");
+  return slug.length >= 2 ? slug : "gym-workspace";
+}
+
 function isoDate(value, label) {
   if (typeof value !== "string") throw new ValidationError(label + " must be an ISO date-time.");
   const timestamp = Date.parse(value);

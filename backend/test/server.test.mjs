@@ -826,3 +826,133 @@ test("session management marks the current session and exposes revocation state"
   assert.equal(list.body.sessions.filter((session) => !session.revoked_at).length,2);
   assert.notEqual(second.body.accessToken, first.body.accessToken);
 });
+
+test("creates a private personal workspace automatically for each new account", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+
+  const first = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"workspace-one@example.com",password:"correct horse battery staple"})
+  });
+  const second = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"workspace-two@example.com",password:"correct horse battery staple"})
+  });
+  assert.equal(first.status,201);
+  assert.equal(second.status,201);
+
+  const firstUserId = JSON.parse(Buffer.from(first.body.accessToken.split(".")[1],"base64url").toString("utf8")).sub;
+  const firstList = await request(testServer.base, "/v1/tenants", {
+    headers:{authorization:"Bearer " + first.body.accessToken}
+  });
+  const secondList = await request(testServer.base, "/v1/tenants", {
+    headers:{authorization:"Bearer " + second.body.accessToken}
+  });
+
+  assert.equal(firstList.status,200);
+  assert.equal(firstList.body.tenants.length,1);
+  assert.equal(firstList.body.tenants[0].id,firstUserId);
+  assert.equal(firstList.body.tenants[0].kind,"personal");
+  assert.equal(firstList.body.tenants[0].role,"owner");
+  assert.equal(firstList.body.tenants[0].membership_status,"active");
+  assert.equal(secondList.body.tenants.length,1);
+  assert.notEqual(firstList.body.tenants[0].id,secondList.body.tenants[0].id);
+});
+
+test("creates gym workspaces with owner membership and rejects invalid or duplicate slugs", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"workspace-owner@example.com",password:"correct horse battery staple"})
+  });
+  const headers = {authorization:"Bearer " + registered.body.accessToken};
+
+  const created = await request(testServer.base, "/v1/tenants", {
+    method:"POST",
+    headers,
+    body:JSON.stringify({name:"Central Fitness",slug:"central-fitness"})
+  });
+  assert.equal(created.status,201);
+  assert.equal(created.body.tenant.name,"Central Fitness");
+  assert.equal(created.body.tenant.slug,"central-fitness");
+  assert.equal(created.body.tenant.kind,"gym");
+  assert.equal(created.body.tenant.role,"owner");
+  assert.equal(created.body.tenant.membership_status,"active");
+
+  const duplicate = await request(testServer.base, "/v1/tenants", {
+    method:"POST",
+    headers,
+    body:JSON.stringify({name:"Another Fitness",slug:"central-fitness"})
+  });
+  assert.equal(duplicate.status,409);
+
+  const badName = await request(testServer.base, "/v1/tenants", {
+    method:"POST",
+    headers,
+    body:JSON.stringify({name:"  "})
+  });
+  assert.equal(badName.status,400);
+
+  const badSlug = await request(testServer.base, "/v1/tenants", {
+    method:"POST",
+    headers,
+    body:JSON.stringify({name:"Valid Workspace",slug:"Not A Slug"})
+  });
+  assert.equal(badSlug.status,400);
+});
+
+test("gym workspace membership does not leak into another user's workspace listing", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const owner = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"workspace-isolation-owner@example.com",password:"correct horse battery staple"})
+  });
+  const visitor = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"workspace-isolation-visitor@example.com",password:"correct horse battery staple"})
+  });
+  const created = await request(testServer.base, "/v1/tenants", {
+    method:"POST",
+    headers:{authorization:"Bearer " + owner.body.accessToken},
+    body:JSON.stringify({name:"Owner Private Gym",slug:"owner-private-gym"})
+  });
+  const visitorTenants = await request(testServer.base, "/v1/tenants", {
+    headers:{authorization:"Bearer " + visitor.body.accessToken}
+  });
+  assert.equal(created.status,201);
+  assert.equal(visitorTenants.status,200);
+  assert.equal(visitorTenants.body.tenants.length,1);
+  assert.equal(visitorTenants.body.tenants[0].kind,"personal");
+  assert.equal(visitorTenants.body.tenants.some((tenant) => tenant.id === created.body.tenant.id),false);
+});
+
+test("prevents the only gym owner from deleting the account and orphaning the workspace", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"workspace-sole-owner@example.com",password:"correct horse battery staple"})
+  });
+  const created = await request(testServer.base, "/v1/tenants", {
+    method:"POST",
+    headers:{authorization:"Bearer " + registered.body.accessToken},
+    body:JSON.stringify({name:"Owner Protected Gym",slug:"owner-protected-gym"})
+  });
+  assert.equal(created.status,201);
+
+  const deletion = await request(testServer.base, "/v1/auth/delete-account", {
+    method:"POST",
+    headers:{authorization:"Bearer " + registered.body.accessToken},
+    body:JSON.stringify({password:"correct horse battery staple"})
+  });
+  assert.equal(deletion.status,409);
+  assert.match(deletion.body.error.message,/Transfer gym workspace ownership/);
+
+  const me = await request(testServer.base, "/v1/me", {
+    headers:{authorization:"Bearer " + registered.body.accessToken}
+  });
+  assert.equal(me.status,200);
+});

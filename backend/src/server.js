@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createRefreshToken, getRefreshTtlSeconds, hashPassword, hashRefreshToken, refreshExpiry, verifyPassword, issueAccessToken, verifyAccessToken, extractBearerToken } from "./auth.js";
-import { ValidationError, normalizeEmail, validatePassword, validateSession, validateMovementEvent } from "./validation.js";
+import { ValidationError, normalizeEmail, validatePassword, validateSession, validateMovementEvent, validateTenantName, validateTenantSlug, slugifyTenantName } from "./validation.js";
 import { decodeSessionCursor, normalizePageLimit, PaginationError } from "./pagination.js";
 
 const JSON_LIMIT = 256 * 1024;
@@ -314,6 +314,19 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
         return send(res, 200, { user:{ id:user.id, email:user.email, createdAt:user.created_at } }, { ...cors, "x-request-id":id });
       }
 
+      if (path === "/v1/tenants" && req.method === "GET") {
+        const tenants = await repo.listTenantsForUser(user.id);
+        return send(res, 200, { tenants }, { ...cors, "x-request-id":id });
+      }
+
+      if (path === "/v1/tenants" && req.method === "POST") {
+        const body = await readJson(req);
+        const name = validateTenantName(body.name);
+        const slug = body.slug === undefined ? validateTenantSlug(slugifyTenantName(name)) : validateTenantSlug(body.slug);
+        const tenant = await repo.createGymTenant(user.id, { name, slug });
+        return send(res, 201, { tenant }, { ...cors, "x-request-id":id });
+      }
+
       if (path === "/v1/auth/delete-account" && req.method === "POST") {
         const body = await readJson(req);
         const password = validatePassword(body.password);
@@ -387,6 +400,8 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
       if (error?.code === "23503") return okError(res, 400, "Referenced resource does not exist.", id);
       if (error?.code === "IDEMPOTENCY_CONFLICT") return okError(res, 409, error.message, id);
       if (error?.code === "DUPLICATE_EMAIL") return okError(res, 409, "Email already registered.", id);
+      if (error?.code === "TENANT_SLUG_CONFLICT") return okError(res, 409, "Workspace slug already exists. Choose a different slug.", id);
+      if (error?.code === "TENANT_OWNER_REQUIRED") return okError(res, 409, error.message, id);
       if (error?.code === "NOT_FOUND") return okError(res, 404, error.message, id);
       const status = Number.isInteger(error?.statusCode) ? error.statusCode : 500;
       console.error(JSON.stringify({ level:"error", requestId:id, durationMs:Date.now()-started, method:req.method, path, message:error?.message }));

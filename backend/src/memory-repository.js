@@ -7,6 +7,8 @@ export class MemoryRepository {
   constructor() {
     this.users = new Map();
     this.usersByEmail = new Map();
+    this.tenants = new Map();
+    this.tenantMemberships = new Map();
     this.sessions = new Map();
     this.idempotency = new Map();
     this.events = new Map();
@@ -30,6 +32,23 @@ export class MemoryRepository {
     const user = { id: randomUUID(), email, password_hash: passwordHash, password_salt: passwordSalt, status: "active", created_at: new Date().toISOString() };
     this.users.set(user.id, user);
     this.usersByEmail.set(email, user.id);
+    const tenant = {
+      id:user.id,
+      name:(email.split("@")[0].slice(0, 60) || "Athlete") + " Personal",
+      slug:"personal-" + user.id.replaceAll("-", ""),
+      kind:"personal",
+      tenant_status:"active",
+      created_by_user_id:user.id,
+      created_at:user.created_at
+    };
+    this.tenants.set(tenant.id, tenant);
+    this.tenantMemberships.set(tenant.id + ":" + user.id, {
+      tenant_id:tenant.id,
+      user_id:user.id,
+      role:"owner",
+      status:"active",
+      joined_at:user.created_at
+    });
     return user;
   }
 
@@ -41,6 +60,55 @@ export class MemoryRepository {
   async getUserById(userId) {
     const user = this.users.get(userId);
     return user ? { id:user.id,email:user.email,status:user.status,created_at:user.created_at } : null;
+  }
+
+  async listTenantsForUser(userId) {
+    return [...this.tenantMemberships.values()]
+      .filter((membership) => membership.user_id === userId && membership.status === "active")
+      .map((membership) => {
+        const tenant = this.tenants.get(membership.tenant_id);
+        return tenant && tenant.tenant_status === "active"
+          ? {
+              id:tenant.id,
+              name:tenant.name,
+              slug:tenant.slug,
+              kind:tenant.kind,
+              tenant_status:tenant.tenant_status,
+              role:membership.role,
+              membership_status:membership.status,
+              created_at:tenant.created_at
+            }
+          : null;
+      })
+      .filter(Boolean)
+      .sort((a,b) => (a.kind === "personal" ? 0 : 1) - (b.kind === "personal" ? 0 : 1) || a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
+  }
+
+  async createGymTenant(userId, { name, slug }) {
+    const user = this.users.get(userId);
+    if (!user || user.status !== "active") {
+      const error = new Error("Account is not active.");
+      error.code = "NOT_FOUND";
+      throw error;
+    }
+    if ([...this.tenants.values()].some((tenant) => tenant.slug === slug)) {
+      const error = new Error("Workspace slug already exists.");
+      error.code = "TENANT_SLUG_CONFLICT";
+      throw error;
+    }
+    const id = randomUUID();
+    const tenant = {
+      id,name,slug,kind:"gym",tenant_status:"active",
+      created_by_user_id:userId,created_at:new Date().toISOString()
+    };
+    this.tenants.set(id, tenant);
+    this.tenantMemberships.set(id + ":" + userId, {
+      tenant_id:id,user_id:userId,role:"owner",status:"active",joined_at:tenant.created_at
+    });
+    return {
+      id,name,slug,kind:"gym",tenant_status:"active",
+      role:"owner",membership_status:"active",created_at:tenant.created_at
+    };
   }
 
   async createPasswordResetToken({ id, userId, tokenHash, expiresAt }) {
@@ -83,6 +151,21 @@ export class MemoryRepository {
     const user = this.users.get(userId);
     if (!user) return false;
 
+    const soleOwnedGym = [...this.tenantMemberships.values()].some((membership) => {
+      if (membership.user_id !== userId || membership.role !== "owner" || membership.status !== "active") return false;
+      const tenant = this.tenants.get(membership.tenant_id);
+      if (!tenant || tenant.kind !== "gym") return false;
+      return ![...this.tenantMemberships.values()].some((other) =>
+        other.tenant_id === tenant.id && other.user_id !== userId &&
+        other.role === "owner" && other.status === "active"
+      );
+    });
+    if (soleOwnedGym) {
+      const error = new Error("Transfer gym workspace ownership before deleting this account.");
+      error.code = "TENANT_OWNER_REQUIRED";
+      throw error;
+    }
+
     const sessionIds = new Set(
       [...this.sessions.values()]
         .filter((session) => session.user_id === userId)
@@ -113,6 +196,13 @@ export class MemoryRepository {
 
     this.usersByEmail.delete(user.email);
     this.users.delete(userId);
+    for (const [key,membership] of this.tenantMemberships) {
+      if (membership.user_id === userId || membership.tenant_id === userId) this.tenantMemberships.delete(key);
+    }
+    for (const [tenantId,tenant] of this.tenants) {
+      if (tenant.kind === "personal" && tenant.id === userId) this.tenants.delete(tenantId);
+      else if (tenant.created_by_user_id === userId) tenant.created_by_user_id = null;
+    }
     this.accountDeletionAudit.push({
       id:randomUUID(),
       event_type:"account-deleted",

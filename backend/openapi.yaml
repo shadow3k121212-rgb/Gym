@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: GYM Training API
-  version: 0.2.1
+  version: 0.3.0
   description: Authenticated sync API for the GYM local-first training product.
 servers:
   - url: https://api.example.invalid
@@ -114,6 +114,41 @@ paths:
       responses:
         "200": { description: Current athlete }
         "401": { description: Authentication required }
+  /v1/tenants:
+    get:
+      security: [{ bearerAuth: [] }]
+      operationId: listTenants
+      responses:
+        "200":
+          description: Workspaces the authenticated user actively belongs to
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tenants]
+                properties:
+                  tenants:
+                    type: array
+                    items: { $ref: "#/components/schemas/TenantMembership" }
+        "401": { description: Authentication required }
+    post:
+      security: [{ bearerAuth: [] }]
+      operationId: createGymTenant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 2, maxLength: 80 }
+                slug: { type: string, minLength: 2, maxLength: 62, pattern: "^[a-z0-9]([a-z0-9-]{0,60}[a-z0-9])$" }
+      responses:
+        "201": { description: Gym workspace created; creator becomes owner }
+        "400": { description: Invalid workspace name or slug }
+        "401": { description: Authentication required }
+        "409": { description: Slug already used }
   /v1/sessions:
     post:
       security: [{ bearerAuth: [] }]
@@ -193,6 +228,18 @@ components:
         last_seen_at: { type: string, format: date-time }
         revoked_at: { type: string, format: date-time, nullable: true }
         revocation_reason: { type: string, nullable: true }
+    TenantMembership:
+      type: object
+      required: [id, name, slug, kind, tenant_status, role, membership_status, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, minLength: 2, maxLength: 80 }
+        slug: { type: string, minLength: 2, maxLength: 62 }
+        kind: { type: string, enum: [personal, gym] }
+        tenant_status: { type: string, enum: [active, suspended, archived] }
+        role: { type: string, enum: [owner, admin, coach, member] }
+        membership_status: { type: string, enum: [active, suspended, left] }
+        created_at: { type: string, format: date-time }
     SessionSummary:
       type: object
       required: [id, name, source, started_at, completed_at, volume, completed_sets]
