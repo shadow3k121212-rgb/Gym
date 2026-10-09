@@ -26,19 +26,21 @@ Every change should be:
 2. Data model + sync correctness
 3. Identity, sessions, authorization, account lifecycle
 4. Reliability, offline recovery, observability
-5. UX/accessibility/performance audit
-6. Production infrastructure, deployment, backup/restore, security
-7. Movement intelligence / camera foundation
-8. Coach/progression intelligence
-9. Analytics, experimentation, billing/support
-10. Release candidate and production evidence
+5. Multi-tenant platform foundation and authorization
+6. UX/accessibility/performance audit
+7. Production infrastructure, deployment, backup/restore, security
+8. Movement intelligence / camera foundation
+9. Coach/progression intelligence
+10. Analytics, experimentation, billing/support
+11. Release candidate and production evidence
 
 ## Current checkpoint
 - Branch: `product/foundation-10x`
 - Completed foundation work: local-first workout UI, backend API, PostgreSQL schema/migrations, idempotent writes, CI, initial security hardening.
-- Current phase: **Phase 3 — Identity, sessions, authorization, account lifecycle**
-- Status: **Phase 4 — Reliability, offline recovery, observability**
-- Last completed phase: **Phase 3 — Identity, sessions, authorization, account lifecycle**
+- Latest Phase 4 implementation head verified: `5934b59016e30be89ddd37071823504e3215d449`.
+- CI run #468 passed on that exact head; run: https://github.com/shadow3k121212-rgb/Gym/actions/runs/37918521948
+- Current phase: **Phase 5 — Multi-tenant platform foundation and authorization**
+- Last completed phase: **Phase 4 — Reliability, offline recovery, observability**
 - Phase 3 verification checkpoint: refresh-token rotation preserves the original absolute session expiry; rotated cookies advertise only remaining server lifetime; current-device revocation clears the refresh cookie and client auth state; production reset delivery is HTTPS-only; auth session listing distinguishes active/expired/revoked state; cross-account history isolation and password-reset multi-device invalidation have regression coverage.
 
 ## Phase 1 definition of done
@@ -53,7 +55,7 @@ Every change should be:
 - CI is green
 
 ## Next phase after completion
-Phase 4 — Reliability, offline recovery, observability
+Phase 5 — Multi-tenant platform foundation and authorization
 
 ## Phase 2 completion log — 2026-10-01
 Implemented:
@@ -191,7 +193,21 @@ Verification evidence:
 - Firecrawl developer research was used to validate bounded metric dimensions and avoid user/session identifiers in production metric attributes.
 - These CI runs passed unit/API tests, PostgreSQL migrations + schema verification, HTTP smoke, dependency audit, static checks, production build, and output verification.
 
-Next Phase 4 implementation slice:
-- targeted client tests for scheduled retry/online/auth-event interaction and explicit duplicate-flush prevention remain the next reliability slice
-- centralized sync outcome counters are now represented by a bounded browser telemetry contract, ready for a future production exporter without changing the event schema
-- pending sync recovery now records `lastAttemptAt`; retention/cleanup policy remains a deployment-level control for a future persisted outbox implementation.
+Phase 4 completion — 2026-10-09
+
+Completed:
+- reusable single-flight sync coordinator with scheduled retry wakeups and deterministic Promise identity
+- isolated online/auth-change lifecycle coordinator that coalesces reconnect storms and avoids duplicate flushes
+- bounded sync outcome telemetry contract and tests without user IDs, session IDs or workout payloads
+- account-scoped recovery summary for ready, scheduled, blocked, stale and oldest-pending state
+- visible 24-hour stale warning, explicitly advisory only
+- `SYNC-RECOVERY.md` defines non-destructive retention: pending or blocked workouts are never automatically deleted by age or retry exhaustion; export remains the user recovery path
+
+Verification evidence:
+- CI run #460 passed on coordinator/lifecycle head `8c6f9c0fcddb3b2f0f58acd8e0f6179c3f0e5b69`.
+- CI run #464 passed on recovery-summary test head `7a54618148c7509da6043cafb67be809af8ff0d3`.
+- CI run #468 passed on exact recovery UI and retention-policy head `5934b59016e30be89ddd37071823504e3215d449`; all configured tests, PostgreSQL migration/schema checks, HTTP smoke, dependency audit, static checks, production build and output verification passed.
+
+Phase 4 status: COMPLETE.
+
+Next: Phase 5 — define and implement the multi-tenant workspace/membership foundation. Existing user-owned training records remain private by default; tenant membership alone must not grant a coach or gym administrator access to an athlete's private history.
