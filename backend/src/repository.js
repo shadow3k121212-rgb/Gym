@@ -101,7 +101,7 @@ export class PostgresRepository {
       `select t.id,t.name,t.slug,t.kind,t.status as tenant_status,tm.role
        from tenants t
        join tenant_memberships tm on tm.tenant_id=t.id
-       where t.id=$2 and tm.user_id=$1 and tm.status='active' and t.status='active'
+       where t.id=$2 and tm.user_id=$1 and tm.status='active' and t.status='active' and t.kind='gym'
        ${lock ? "for update of t, tm" : ""}`,
       [userId,tenantId]
     );

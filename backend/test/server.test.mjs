@@ -920,6 +920,33 @@ test("normalizes a workspace name and generates its URL-safe slug", async (t) =>
   assert.equal(created.body.tenant.slug,"north-side-fitness");
 });
 
+test("personal workspace owner cannot use gym roster or invitation administration endpoints", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"personal-admin-boundary@example.com",password:"correct horse battery staple"})
+  });
+  const userId = JSON.parse(Buffer.from(registered.body.accessToken.split(".")[1],"base64url").toString("utf8")).sub;
+  const personalTenant = (await request(testServer.base,"/v1/tenants",{
+    headers:{authorization:"Bearer "+registered.body.accessToken}
+  })).body.tenants[0];
+  assert.equal(personalTenant.id,userId);
+  assert.equal(personalTenant.kind,"personal");
+
+  const listMembers = await request(testServer.base,"/v1/tenants/"+personalTenant.id+"/members",{
+    headers:{authorization:"Bearer "+registered.body.accessToken}
+  });
+  assert.equal(listMembers.status,404);
+
+  const invite = await request(testServer.base,"/v1/tenants/"+personalTenant.id+"/invitations",{
+    method:"POST",
+    headers:{authorization:"Bearer "+registered.body.accessToken},
+    body:JSON.stringify({email:"other-person@example.com",role:"coach"})
+  });
+  assert.equal(invite.status,404);
+});
+
 test("gym workspace membership does not leak into another user's workspace listing", async (t) => {
   const testServer = await makeServer();
   t.after(() => testServer.server.close());

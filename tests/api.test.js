@@ -341,7 +341,7 @@ test("uses authenticated tenant APIs with pagination and safe invitation methods
     assert.match(calls.find(x=>x.url.includes("/members?")).url,/limit=50/);
     assert.match(calls.find(x=>x.url.includes("/members?")).url,/before=member.cursor/);
     assert.equal(calls.find(x=>x.url.endsWith("/invitations")&&x.options.method==="POST").options.method,"POST");
-    assert.equal(calls.find(x=>x.url.endsWith("/invitations")&&x.options.method==="DELETE").options.method,"DELETE");
+    assert.equal(calls.find(x=>x.options.method==="DELETE" && /\\/invitations\\/[^/?]+$/.test(new URL(x.url).pathname)).options.method,"DELETE");
     assert.equal(calls.find(x=>x.url.endsWith("/tenant-invitations/accept")).options.credentials,"include");
     for(const {options} of calls){
       assert.equal(options.credentials,"include");

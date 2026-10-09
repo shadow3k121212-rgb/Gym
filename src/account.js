@@ -279,10 +279,11 @@ async function handleTenantAction(button) {
         renderTenantWorkspaceDetail();
         return announce(tenantActionMessage);
       }
-      tenantDevelopmentToken = typeof result.body?.developmentToken === "string" ? result.body.developmentToken : null;
-      tenantDevelopmentTokenTenantId = tenantDevelopmentToken ? selectedTenantId : null;
+      const developmentToken = typeof result.body?.developmentToken === "string" ? result.body.developmentToken : null;
       await loadTenantWorkspaceDetail(selectedTenantId);
-      tenantActionMessage = tenantDevelopmentToken
+      tenantDevelopmentToken = developmentToken;
+      tenantDevelopmentTokenTenantId = developmentToken ? selectedTenantId : null;
+      tenantActionMessage = developmentToken
         ? "Invitation saved for " + email + ". Copy the development token below to complete the test flow."
         : "Invitation email queued for " + email + ".";
       renderTenantWorkspaceDetail();

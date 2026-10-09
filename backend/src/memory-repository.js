@@ -116,7 +116,7 @@ export class MemoryRepository {
   async requireTenantManager(userId, tenantId) {
     const tenant=this.tenants.get(tenantId);
     const membership=this.tenantMemberships.get(tenantId+":"+userId);
-    if (!tenant || tenant.tenant_status!=="active" || !membership || membership.status!=="active") {
+    if (!tenant || tenant.kind!=="gym" || tenant.tenant_status!=="active" || !membership || membership.status!=="active") {
       const error=new Error("Workspace not found.");error.code="NOT_FOUND";throw error;
     }
     if (!["owner","admin"].includes(membership.role)) {
