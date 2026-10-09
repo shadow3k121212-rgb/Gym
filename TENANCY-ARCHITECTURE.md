@@ -14,7 +14,9 @@ The first schema/API slice introduces:
 
 ## Roles and ownership invariants
 
-Membership roles are `owner`, `admin`, `coach`, and `member`. Role names are persisted now, but not every role-management action or permission route is implemented by this slice. Invitation and role-change endpoints must enforce authorization server-side; a client-supplied tenant ID or role is never proof of permission.
+Membership roles are `owner`, `admin`, `coach`, and `member`. Owners may invite admins, coaches and members; admins may invite only coaches and members. Only active owners/admins can view the workspace roster and invitation list. Personal workspaces are excluded from team-administration endpoints even when their owner calls them directly. A client-supplied tenant ID or role is never proof of permission.
+
+Invitation tokens are high-entropy opaque values; only hashes are persisted. Tokens expire after seven days, can be revoked/replaced, require the signed-in account email to match the invite address, and can be accepted once. Production issuance requires an HTTPS delivery webhook and secret; a timeout/error revokes the invite instead of leaving an unknown live credential.
 
 A gym workspace must always retain an active owner. Account deletion is rejected when the requester is the sole active owner. Ownership transfer/removal UI and APIs are subsequent work.
 
@@ -32,15 +34,16 @@ Membership in a gym does **not** automatically reveal an athlete's private train
 
 ## Compatibility and migration
 
-Migrations `010_tenants.sql` and `011_tenant_owner_guard.sql` are additive. Existing user IDs anchor personal workspace IDs so the next data-scope migration can map legacy records deterministically without rewriting session identifiers. It does not move, share, or relabel workout rows. New users receive a personal workspace in the same database transaction through a trigger; the in-memory repository mirrors this contract for API tests.
+Migrations `010_tenants.sql`, `011_tenant_owner_guard.sql`, and `012_tenant_invite_uniqueness.sql` are additive. Existing user IDs anchor personal workspace IDs so the next data-scope migration can map legacy records deterministically without rewriting session identifiers. It does not move, share, or relabel workout rows. New users receive a personal workspace in the same database transaction through a trigger; the in-memory repository mirrors this contract for API tests.
 
 Workspace API:
 - `GET /v1/tenants`: returns active memberships of the authenticated user only.
 - `POST /v1/tenants`: creates a gym workspace and grants the creator the owner role.
+- Settings UI lists and creates workspaces, browses a tenant-scoped roster, and manages invitations.
 - Owner/admin-gated roster and invitation listing are tenant scoped and cursor paginated.
 - Invitation issuance enforces role hierarchy; admin may invite coaches/members, while only an owner may invite admins.
 - Acceptance checks signed-in account email, token hash, expiry, revocation and one-time use; active memberships are not overwritten.
 - Production invitation delivery uses a configured HTTPS webhook; delivery failure revokes the just-created invitation.
 - Duplicate slugs return a conflict; malformed names/slugs return a client error.
 
-This is the multi-tenant foundation, not a claim that team sharing, invitations, billing or tenant-scoped workout access are already complete.
+The invitation issuance/acceptance and management UI/API are implemented. This is still not a claim of production-ready multi-tenant workout sharing: ownership transfer, membership suspension/reactivation, explicit coach-to-athlete visibility, tenant-scoped training resources, billing and RLS defense-in-depth remain subsequent work.

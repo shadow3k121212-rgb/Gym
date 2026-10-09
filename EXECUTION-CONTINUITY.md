@@ -223,10 +223,18 @@ First implementation slice:
 - explicit privacy rule: membership does not grant access to another athlete's sessions; invitation/team-sharing and tenant-scoped workout access remain separate slices
 - updated OpenAPI and schema-verifier contract, including trigger verification
 - workspace-name/slug normalization tests and sole-owner/multi-owner account-deletion coverage
+- role-checked invitations with one-time hashed tokens, seven-day expiry, replacement/revocation, signed-in email matching and replay protection
+- owner/admin-gated, tenant-scoped member and invitation roster APIs with cursor pagination
+- production invitation delivery requires an HTTPS webhook + secret; failed delivery revokes the invitation rather than leaving a live undisclosed token
+- Settings UI now lists workspaces, creates gyms, loads roster/invitations, sends/revokes invitations, and provides the development-token acceptance flow
+- personal workspaces are excluded server-side from gym roster/invitation administration even when the person is the personal workspace owner
 
 Current tenant model decision and next slices: see `TENANCY-ARCHITECTURE.md`.
 
 Verification evidence:
 - CI run #477 passed on exact tenant-foundation head `cf9f9b88bd6e3b86886e226e2ad624b4df1c54af`: tests, migrations/schema verification (including migration 011 owner trigger), HTTP smoke, dependency audit, static checks and production build/output verification all passed. Run: https://github.com/shadow3k121212-rgb/Gym/actions/runs/37920149021.
 
-Phase 5 status: IN PROGRESS; do not treat GYM as production-ready multi-tenant until invitation/ownership transfer and tenant-scoped workout authorization are implemented and tested.
+Verification evidence:
+- CI run #495 passed on exact workspace/invitation client and personal-workspace authorization head `928c17035d21517992ed300df93081ecfffa7ad9`; frontend + backend tests, PostgreSQL migrations/schema verification, HTTP smoke, dependency audit, static checks and production build/output checks all passed. Run: https://github.com/shadow3k121212-rgb/Gym/actions/runs/37921703293.
+
+Phase 5 status: IN PROGRESS; do not treat GYM as production-ready multi-tenant until ownership transfer/offboarding, membership status administration, and tenant-scoped workout authorization/explicit coach visibility are implemented and tested.
