@@ -1,3 +1,4 @@
+import { summarizeSyncQueue } from "./sync-queue.js";
 import {
   confirmPasswordReset,
   deleteAccount,
@@ -98,15 +99,23 @@ function renderSyncRecovery(state) {
     : [];
   const legacy = queue.filter((item) => item && !item.userId && item.session?.id);
   const blocked = pending.filter((item) => item.blocked);
+  const recovery = summarizeSyncQueue(queue, { userId:currentUserId });
   if (!pending.length && !legacy.length) return "";
   return `
     ${pending.length ? `
       <div class="panel-subsection">
         <div class="eyebrow">CLOUD RECOVERY</div>
         <strong>${pending.length} workout${pending.length === 1 ? "" : "s"} retained for sync.</strong>
+        <div class="micro-note">${recovery.dueCount} ready to sync · ${recovery.scheduledCount} waiting for retry · ${blocked.length} need manual retry.</div>
         <div class="micro-note">${blocked.length
-          ? blocked.length + " blocked after a permanent sync rejection. Local records remain safe."
+          ? "Blocked workouts stay on this device after a permanent rejection; use Retry after reviewing the error."
           : "Transient failures retry automatically with bounded backoff."}</div>
+        ${recovery.staleCount ? `
+          <div class="micro-note" role="status">${recovery.staleCount} workout${recovery.staleCount === 1 ? " has" : "s have"} been pending for more than 24 hours. Nothing is automatically deleted; export your data if sync remains unresolved.</div>
+        ` : ""}
+        ${recovery.oldestPendingAt ? `
+          <div class="micro-note">Oldest pending workout: ${escapeHtml(new Date(recovery.oldestPendingAt).toLocaleString("en-IN"))}</div>
+        ` : ""}
         ${blocked.length ? blocked.map((item) => `
           <div class="session-row">
             <div>
