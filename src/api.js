@@ -214,3 +214,54 @@ export function listCloudSessions(limit = 50, cursor = null) {
   if (cursor) params.set("before", cursor);
   return request("/v1/sessions?" + params.toString());
 }
+
+function tenantRequestUnavailable() {
+  return Promise.resolve({ ok:false, message:hasApi() ? "Sign in to manage GYM workspaces." : "Cloud API is not configured." });
+}
+
+function tenantPagePath(path, limit = 20, cursor = null) {
+  const safeLimit = Number.isInteger(limit) ? Math.min(Math.max(limit, 1), 100) : 20;
+  const params = new URLSearchParams({limit:String(safeLimit)});
+  if (cursor) params.set("before",cursor);
+  return path + "?" + params.toString();
+}
+
+export function listTenants() {
+  if (!apiBaseUrl || !hasAuth()) return tenantRequestUnavailable();
+  return request("/v1/tenants");
+}
+
+export function createTenant(name, slug = null) {
+  if (!apiBaseUrl || !hasAuth()) return tenantRequestUnavailable();
+  const body = {name};
+  if (typeof slug === "string" && slug.trim()) body.slug = slug.trim();
+  return request("/v1/tenants", {method:"POST",body:JSON.stringify(body)});
+}
+
+export function listTenantMembers(tenantId, limit = 20, cursor = null) {
+  if (!apiBaseUrl || !hasAuth() || typeof tenantId !== "string" || !tenantId) return tenantRequestUnavailable();
+  return request(tenantPagePath("/v1/tenants/" + encodeURIComponent(tenantId) + "/members",limit,cursor));
+}
+
+export function listTenantInvitations(tenantId, limit = 20, cursor = null) {
+  if (!apiBaseUrl || !hasAuth() || typeof tenantId !== "string" || !tenantId) return tenantRequestUnavailable();
+  return request(tenantPagePath("/v1/tenants/" + encodeURIComponent(tenantId) + "/invitations",limit,cursor));
+}
+
+export function createTenantInvitation(tenantId, email, role) {
+  if (!apiBaseUrl || !hasAuth() || typeof tenantId !== "string" || !tenantId) return tenantRequestUnavailable();
+  return request("/v1/tenants/" + encodeURIComponent(tenantId) + "/invitations", {
+    method:"POST",
+    body:JSON.stringify({email,role})
+  });
+}
+
+export function revokeTenantInvitation(tenantId, invitationId) {
+  if (!apiBaseUrl || !hasAuth() || typeof tenantId !== "string" || !tenantId || typeof invitationId !== "string" || !invitationId) return tenantRequestUnavailable();
+  return request("/v1/tenants/" + encodeURIComponent(tenantId) + "/invitations/" + encodeURIComponent(invitationId), {method:"DELETE"});
+}
+
+export function acceptTenantInvitation(token) {
+  if (!apiBaseUrl || !hasAuth()) return tenantRequestUnavailable();
+  return request("/v1/tenant-invitations/accept", {method:"POST",body:JSON.stringify({token})});
+}

@@ -299,3 +299,61 @@ test("uses credentialed cookie transport instead of browser token storage", asyn
     globalThis.__GYM_CONFIG__ = originalConfig;
   }
 });
+
+test("uses authenticated tenant APIs with pagination and safe invitation methods", async () => {
+  const originalFetch=globalThis.fetch;
+  const originalStorageDescriptor=installStorage(new Map());
+  const originalConfig=globalThis.__GYM_CONFIG__;
+  globalThis.__GYM_CONFIG__={apiBaseUrl:"https://api.example.test"};
+  const calls=[];
+  globalThis.fetch=async (url,options={})=>{
+    calls.push({url:String(url),options});
+    let body={};
+    if(String(url).includes("/members?")) body={members:[],nextCursor:null};
+    else if(String(url).includes("/invitations?")) body={invitations:[],nextCursor:null};
+    else if(String(url).endsWith("/tenant-invitations/accept")) body={tenant:{id:"t-1",role:"member"}};
+    else if(options.method==="POST"&&String(url).endsWith("/invitations")) body={invitation:{id:"i-1"},developmentToken:"dev-token"};
+    else if(options.method==="DELETE") body={invitation:{id:"i-1",status:"revoked"}};
+    else if(options.method==="POST"&&String(url).endsWith("/v1/tenants")) body={tenant:{id:"t-1"}};
+    else body={tenants:[]};
+    return new Response(JSON.stringify(body),{status:options.method==="POST"&&String(url).endsWith("/v1/tenants")?201:200,headers:{"content-type":"application/json"}});
+  };
+  try {
+    const module=await import("../src/api.js?tenant-wrapper-test="+Date.now());
+    module.setAuthSession("tenant-access-token","123e4567-e89b-12d3-a456-426614174000");
+    const tenantId="123e4567-e89b-12d3-a456-426614174010";
+    const [tenants,members,invitations,created,issued,revoked,accepted]=await Promise.all([
+      module.listTenants(),
+      module.listTenantMembers(tenantId,50,"member.cursor"),
+      module.listTenantInvitations(tenantId,25,"invite.cursor"),
+      module.createTenant("Central Fitness","central-fitness"),
+      module.createTenantInvitation(tenantId,"coach@example.com","coach"),
+      module.revokeTenantInvitation(tenantId,"123e4567-e89b-12d3-a456-426614174099"),
+      module.acceptTenantInvitation("opaque-invitation-token")
+    ]);
+    assert.equal(tenants.ok,true);
+    assert.equal(members.ok,true);
+    assert.equal(invitations.ok,true);
+    assert.equal(created.ok,true);
+    assert.equal(issued.ok,true);
+    assert.equal(revoked.ok,true);
+    assert.equal(accepted.ok,true);
+    assert.match(calls.find(x=>x.url.includes("/members?")).url,/limit=50/);
+    assert.match(calls.find(x=>x.url.includes("/members?")).url,/before=member.cursor/);
+    assert.equal(calls.find(x=>x.url.endsWith("/invitations")&&x.options.method==="POST").options.method,"POST");
+    assert.equal(calls.find(x=>x.url.endsWith("/invitations")&&x.options.method==="DELETE").options.method,"DELETE");
+    assert.equal(calls.find(x=>x.url.endsWith("/tenant-invitations/accept")).options.credentials,"include");
+    for(const {options} of calls){
+      assert.equal(options.credentials,"include");
+      assert.match(options.headers.authorization,/^Bearer tenant-access-token$/);
+    }
+    const inviteCall=calls.find(x=>x.url.endsWith("/invitations")&&x.options.method==="POST");
+    assert.deepEqual(JSON.parse(inviteCall.options.body),{email:"coach@example.com",role:"coach"});
+    const acceptedCall=calls.find(x=>x.url.endsWith("/tenant-invitations/accept"));
+    assert.deepEqual(JSON.parse(acceptedCall.options.body),{token:"opaque-invitation-token"});
+  } finally {
+    globalThis.fetch=originalFetch;
+    restoreStorage(originalStorageDescriptor);
+    globalThis.__GYM_CONFIG__=originalConfig;
+  }
+});
