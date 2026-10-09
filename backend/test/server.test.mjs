@@ -1,0 +1,1191 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import { MemoryRepository } from "../src/memory-repository.js";
+import { createApi } from "../src/server.js";
+import { hashRefreshToken } from "../src/auth.js";
+
+async function makeServer() {
+  const repo = new MemoryRepository();
+  const server = createServer(createApi({ repo, jwtSecret:"test-secret-that-is-at-least-32-characters-long", corsOrigin:"*" }));
+  await new Promise((resolve) => server.listen(0, resolve));
+  const { port } = server.address();
+  return { repo, server, base:`http://127.0.0.1:${port}` };
+}
+
+async function request(base, path, options={}) {
+  const response = await fetch(base + path, {
+    ...options,
+    headers: { "content-type":"application/json", ...(options.headers || {}) }
+  });
+  const text = await response.text();
+  let body = {};
+  if (text) {
+    try { body = JSON.parse(text); } catch { body = { raw:text }; }
+  }
+  return { status:response.status, body, headers:response.headers };
+}
+
+test("registers, authenticates, and reads the current user", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST", body:JSON.stringify({email:"athlete@example.com",password:"correct horse battery staple"})
+  });
+  assert.equal(registered.status, 201);
+  assert.match(registered.body.accessToken, /^.+\..+\..+$/);
+
+  const me = await request(testServer.base, "/v1/me", {
+    headers:{authorization:`Bearer ${registered.body.accessToken}`}
+  });
+  assert.equal(me.status, 200);
+  assert.equal(me.body.user.email, "athlete@example.com");
+});
+
+test("exposes liveness and readiness separately", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const health = await request(testServer.base, "/v1/health");
+  const ready = await request(testServer.base, "/v1/ready");
+  assert.equal(health.status, 200);
+  assert.equal(health.body.ok, true);
+  assert.ok(health.headers.get("x-request-id"));
+  assert.equal(health.headers.get("x-frame-options"), "DENY");
+  assert.equal(health.headers.get("x-content-type-options"), "nosniff");
+  assert.equal(ready.status, 200);
+  assert.equal(ready.body.ready, true);
+});
+
+test("rejects malformed date-time input with a client error", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST", body:JSON.stringify({email:"dates@example.com",password:"correct horse battery staple"})
+  });
+  const response = await request(testServer.base, "/v1/sessions", {
+    method:"POST",
+    headers:{authorization:`Bearer ${registered.body.accessToken}`,"idempotency-key":"dates-invalid-123456"},
+    body:JSON.stringify({id:"123e4567-e89b-12d3-a456-426614174100",startedAt:"not-a-date",source:"manual",name:"Broken",exercises:[]})
+  });
+  assert.equal(response.status, 400);
+});
+
+test("rejects weak passwords", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const response = await request(testServer.base, "/v1/auth/register", {
+    method:"POST", body:JSON.stringify({email:"athlete@example.com",password:"too-short"})
+  });
+  assert.equal(response.status, 400);
+});
+
+test("rate-limits repeated invalid logins", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  await request(testServer.base, "/v1/auth/register", {
+    method:"POST", body:JSON.stringify({email:"ratelimit@example.com",password:"correct horse battery staple"})
+  });
+  let response;
+  for (let i=0; i<6; i += 1) {
+    response = await request(testServer.base, "/v1/auth/login", {
+      method:"POST", body:JSON.stringify({email:"ratelimit@example.com",password:"incorrect password 123"})
+    });
+  }
+  assert.equal(response.status, 429);
+  assert.ok(response.body.error.details.retryAfter > 0);
+});
+
+test("persists a session and returns the same result for the same idempotency key", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST", body:JSON.stringify({email:"athlete@example.com",password:"correct horse battery staple"})
+  });
+  const token=registered.body.accessToken;
+  const session={
+    id:"123e4567-e89b-12d3-a456-426614174000",
+    startedAt:"2026-10-01T12:00:00.000Z",
+    completedAt:"2026-10-01T12:05:00.000Z",
+    source:"manual",
+    name:"Upper Strength",
+    exercises:[{exerciseId:"bench",sets:[{index:1,reps:8,weightKg:70,completed:true,completedAt:"2026-10-01T12:05:00.000Z",rpe:8}]}]
+  };
+
+  const first=await request(testServer.base,"/v1/sessions",{
+    method:"POST",headers:{authorization:`Bearer ${token}`,"idempotency-key":"session-write-123456"},
+    body:JSON.stringify(session)
+  });
+  const second=await request(testServer.base,"/v1/sessions",{
+    method:"POST",headers:{authorization:`Bearer ${token}`,"idempotency-key":"session-write-123456"},
+    body:JSON.stringify(session)
+  });
+  assert.equal(first.status,201);
+  assert.equal(second.status,200);
+  const list=await request(testServer.base,"/v1/sessions",{headers:{authorization:`Bearer ${token}`}});
+  assert.equal(list.status,200);
+  assert.equal(list.body.sessions.length,1);
+  assert.equal(Number(list.body.sessions[0].volume),560);
+  assert.equal(list.body.sessions[0].completed_at, "2026-10-01T12:05:00.000Z");
+});
+
+test("rejects reusing an idempotency key with a different payload", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST", body:JSON.stringify({email:"conflict@example.com",password:"correct horse battery staple"})
+  });
+  const token = registered.body.accessToken;
+  const base = {
+    id:"123e4567-e89b-12d3-a456-426614174002",
+    startedAt:"2026-10-01T13:00:00Z",
+    completedAt:"2026-10-01T13:05:00Z",
+    source:"manual",
+    name:"Conflict Test",
+    exercises:[{exerciseId:"bench",sets:[{index:1,reps:8,weightKg:70,completed:true,completedAt:"2026-10-01T13:05:00Z",rpe:8}]}]
+  };
+  const first=await request(testServer.base,"/v1/sessions",{
+    method:"POST",headers:{authorization:`Bearer ${token}`,"idempotency-key":"conflict-write-123456"},
+    body:JSON.stringify(base)
+  });
+  const changed={...base,name:"Changed Payload"};
+  const second=await request(testServer.base,"/v1/sessions",{
+    method:"POST",headers:{authorization:`Bearer ${token}`,"idempotency-key":"conflict-write-123456"},
+    body:JSON.stringify(changed)
+  });
+  assert.equal(first.status,201);
+  assert.equal(second.status,409);
+  assert.match(second.body.error.message, /different request payload/);
+});
+
+test("rejects chronologically impossible timestamps", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST", body:JSON.stringify({email:"chronology@example.com",password:"correct horse battery staple"})
+  });
+  const response = await request(testServer.base, "/v1/sessions", {
+    method:"POST",
+    headers:{authorization:`Bearer ${registered.body.accessToken}`,"idempotency-key":"chronology-123456789"},
+    body:JSON.stringify({
+      id:"123e4567-e89b-12d3-a456-426614174006",
+      startedAt:"2026-10-01T14:00:00Z",
+      completedAt:"2026-10-01T13:59:00Z",
+      source:"manual",
+      name:"Impossible Time",
+      exercises:[]
+    })
+  });
+  assert.equal(response.status,400);
+});
+
+test("requires timestamps to match set completion state", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST", body:JSON.stringify({email:"set-state@example.com",password:"correct horse battery staple"})
+  });
+  const response = await request(testServer.base, "/v1/sessions", {
+    method:"POST",
+    headers:{authorization:`Bearer ${registered.body.accessToken}`,"idempotency-key":"set-state-123456789"},
+    body:JSON.stringify({
+      id:"123e4567-e89b-12d3-a456-426614174003",
+      startedAt:"2026-10-01T14:00:00Z",
+      source:"manual",
+      name:"Invalid Set State",
+      exercises:[{exerciseId:"bench",sets:[{index:1,reps:8,weightKg:70,completed:true,completedAt:null,rpe:8}]}]
+    })
+  });
+  assert.equal(response.status,400);
+});
+
+test("makes movement-event writes idempotent and rejects payload conflicts", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST", body:JSON.stringify({email:"movement@example.com",password:"correct horse battery staple"})
+  });
+  const token=registered.body.accessToken;
+  const session={id:"123e4567-e89b-12d3-a456-426614174005",startedAt:"2026-10-01T15:00:00Z",source:"manual",name:"Movement",exercises:[]};
+  await request(testServer.base,"/v1/sessions",{
+    method:"POST",headers:{authorization:`Bearer ${token}`,"idempotency-key":"movement-session-123456"},
+    body:JSON.stringify(session)
+  });
+  const event={schemaVersion:1,sessionId:session.id,exerciseId:"bench",timestamp:"2026-10-01T15:01:00Z",source:"camera",reps:8,confidence:.92,model:"pose-v0",metrics:{rom:.81}};
+  const first=await request(testServer.base,"/v1/movement-events",{
+    method:"POST",headers:{authorization:`Bearer ${token}`,"idempotency-key":"movement-event-123456"},
+    body:JSON.stringify(event)
+  });
+  const second=await request(testServer.base,"/v1/movement-events",{
+    method:"POST",headers:{authorization:`Bearer ${token}`,"idempotency-key":"movement-event-123456"},
+    body:JSON.stringify(event)
+  });
+  const changed=await request(testServer.base,"/v1/movement-events",{
+    method:"POST",headers:{authorization:`Bearer ${token}`,"idempotency-key":"movement-event-123456"},
+    body:JSON.stringify({...event,reps:9})
+  });
+  assert.equal(first.status,201);
+  assert.equal(first.body.event.reps,8);
+  assert.equal(second.status,200);
+  assert.equal(second.body.event.id,first.body.event.id);
+  assert.equal(second.body.event.reps,8);
+  assert.equal(changed.status,409);
+});
+
+test("blocks movement events for another user’s session", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const a=await request(testServer.base,"/v1/auth/register",{method:"POST",body:JSON.stringify({email:"a@example.com",password:"correct horse battery staple"})});
+  const b=await request(testServer.base,"/v1/auth/register",{method:"POST",body:JSON.stringify({email:"b@example.com",password:"correct horse battery staple"})});
+  const session={id:"123e4567-e89b-12d3-a456-426614174001",startedAt:"2026-10-01T12:00:00Z",source:"manual",name:"Test",exercises:[]};
+  await request(testServer.base,"/v1/sessions",{method:"POST",headers:{authorization:`Bearer ${a.body.accessToken}`,"idempotency-key":"session-write-abcdef"},body:JSON.stringify(session)});
+  const response=await request(testServer.base,"/v1/movement-events",{method:"POST",headers:{authorization:`Bearer ${b.body.accessToken}`,"idempotency-key":"movement-owner-123456"},body:JSON.stringify({schemaVersion:1,sessionId:session.id,exerciseId:"bench",timestamp:"2026-10-01T12:00:00Z",source:"camera",reps:8,confidence:.92,model:"pose-v0",metrics:{rom:.81}})});
+  assert.equal(response.status,404);
+});
+test("session history is isolated by authenticated user", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+
+  const a = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"history-a@example.com",password:"correct horse battery staple"})
+  });
+  const b = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"history-b@example.com",password:"correct horse battery staple"})
+  });
+
+  const sessionA = {
+    id:"123e4567-e89b-12d3-a456-426614174110",
+    startedAt:"2026-10-01T18:00:00Z",
+    source:"manual",
+    name:"Private A",
+    exercises:[]
+  };
+  const sessionB = {
+    id:"123e4567-e89b-12d3-a456-426614174111",
+    startedAt:"2026-10-01T18:01:00Z",
+    source:"manual",
+    name:"Private B",
+    exercises:[]
+  };
+
+  await request(testServer.base, "/v1/sessions", {
+    method:"POST",
+    headers:{authorization:`Bearer ${a.body.accessToken}`,"idempotency-key":"history-a-write-123456"},
+    body:JSON.stringify(sessionA)
+  });
+  await request(testServer.base, "/v1/sessions", {
+    method:"POST",
+    headers:{authorization:`Bearer ${b.body.accessToken}`,"idempotency-key":"history-b-write-123456"},
+    body:JSON.stringify(sessionB)
+  });
+
+  const listA = await request(testServer.base, "/v1/sessions", {
+    headers:{authorization:`Bearer ${a.body.accessToken}`}
+  });
+  const listB = await request(testServer.base, "/v1/sessions", {
+    headers:{authorization:`Bearer ${b.body.accessToken}`}
+  });
+
+  assert.equal(listA.status,200);
+  assert.equal(listB.status,200);
+  assert.deepEqual(listA.body.sessions.map((s) => s.id), [sessionA.id]);
+  assert.deepEqual(listB.body.sessions.map((s) => s.id), [sessionB.id]);
+  assert.ok(!JSON.stringify(listA.body).includes(sessionB.name));
+  assert.ok(!JSON.stringify(listB.body).includes(sessionA.name));
+});
+
+test("paginates session history with a stable cursor", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST", body:JSON.stringify({email:"pagination@example.com",password:"correct horse battery staple"})
+  });
+  const token = registered.body.accessToken;
+
+  for (let i = 0; i < 55; i += 1) {
+    await request(testServer.base, "/v1/sessions", {
+      method:"POST",
+      headers:{
+        authorization:`Bearer ${token}`,
+        "idempotency-key":`pagination-write-${String(i).padStart(4,"0")}`
+      },
+      body:JSON.stringify({
+        id:`123e4567-e89b-12d3-a456-${String(426614174100 + i)}`,
+        startedAt:`2026-10-01T10:${String(i).padStart(2,"0")}:00.000Z`,
+        source:"manual",
+        name:"Page " + i,
+        exercises:[]
+      })
+    });
+  }
+
+  const first = await request(testServer.base, "/v1/sessions?limit=50", {
+    headers:{authorization:`Bearer ${token}`}
+  });
+  assert.equal(first.status, 200);
+  assert.equal(first.body.sessions.length, 50);
+  assert.equal(typeof first.body.nextCursor, "string");
+
+  const second = await request(
+    testServer.base,
+    "/v1/sessions?limit=50&before=" + encodeURIComponent(first.body.nextCursor),
+    { headers:{authorization:`Bearer ${token}`} }
+  );
+  assert.equal(second.status, 200);
+  assert.equal(second.body.sessions.length, 5);
+  assert.equal(second.body.nextCursor, null);
+
+  const firstIds = new Set(first.body.sessions.map((s) => s.id));
+  assert.ok(second.body.sessions.every((s) => !firstIds.has(s.id)));
+});
+
+test("rejects malformed pagination cursors and limits", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST", body:JSON.stringify({email:"badcursor@example.com",password:"correct horse battery staple"})
+  });
+  const token = registered.body.accessToken;
+
+  const badCursor = await request(testServer.base, "/v1/sessions?limit=20&before=not-a-real-cursor", {
+    headers:{authorization:`Bearer ${token}`}
+  });
+  const badLimit = await request(testServer.base, "/v1/sessions?limit=0", {
+    headers:{authorization:`Bearer ${token}`}
+  });
+  assert.equal(badCursor.status, 400);
+  assert.equal(badLimit.status, 400);
+});
+test("rejects reusing a session id under a different idempotency key", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST", body:JSON.stringify({email:"sessionid@example.com",password:"correct horse battery staple"})
+  });
+  const token = registered.body.accessToken;
+  const session = {
+    id:"123e4567-e89b-12d3-a456-426614174099",
+    startedAt:"2026-10-01T16:00:00Z",
+    completedAt:null,
+    source:"manual",
+    name:"Stable ID",
+    exercises:[]
+  };
+  const first = await request(testServer.base, "/v1/sessions", {
+    method:"POST",
+    headers:{authorization:`Bearer ${token}`,"idempotency-key":"session-id-first-123456"},
+    body:JSON.stringify(session)
+  });
+  const second = await request(testServer.base, "/v1/sessions", {
+    method:"POST",
+    headers:{authorization:`Bearer ${token}`,"idempotency-key":"session-id-second-123456"},
+    body:JSON.stringify(session)
+  });
+  assert.equal(first.status, 201);
+  assert.equal(second.status, 409);
+});
+test("does not reveal movement events through another user’s replay key", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const a = await request(testServer.base, "/v1/auth/register", {
+    method:"POST", body:JSON.stringify({email:"event-owner@example.com",password:"correct horse battery staple"})
+  });
+  const b = await request(testServer.base, "/v1/auth/register", {
+    method:"POST", body:JSON.stringify({email:"event-other@example.com",password:"correct horse battery staple"})
+  });
+  const session = {
+    id:"123e4567-e89b-12d3-a456-426614174098",
+    startedAt:"2026-10-01T17:00:00Z",
+    source:"manual",
+    name:"Movement Owner",
+    exercises:[]
+  };
+  await request(testServer.base, "/v1/sessions", {
+    method:"POST",
+    headers:{authorization:`Bearer ${a.body.accessToken}`,"idempotency-key":"movement-owner-session-123456"},
+    body:JSON.stringify(session)
+  });
+  const event = {
+    schemaVersion:1,
+    sessionId:session.id,
+    exerciseId:"bench",
+    timestamp:"2026-10-01T17:01:00Z",
+    source:"camera",
+    reps:8,
+    confidence:.92,
+    model:"pose-v0",
+    metrics:{rom:.81}
+  };
+  const ownerWrite = await request(testServer.base, "/v1/movement-events", {
+    method:"POST",
+    headers:{
+      authorization:`Bearer ${a.body.accessToken}`,
+      "idempotency-key":"movement-replay-shared-123456"
+    },
+    body:JSON.stringify(event)
+  });
+  const otherReplay = await request(testServer.base, "/v1/movement-events", {
+    method:"POST",
+    headers:{
+      authorization:`Bearer ${b.body.accessToken}`,
+      "idempotency-key":"movement-replay-shared-123456"
+    },
+    body:JSON.stringify(event)
+  });
+  assert.equal(ownerWrite.status,201);
+  assert.equal(otherReplay.status,404);
+});
+function cookieFrom(response) {
+  return response.headers.get("set-cookie") || "";
+}
+
+function refreshCookieValue(response) {
+  const cookie = cookieFrom(response);
+  const match = cookie.match(/^gym_refresh=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+test("issues a refresh cookie and rotates it without exposing raw refresh tokens", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"refresh@example.com",password:"correct horse battery staple"})
+  });
+  const oldRefresh = refreshCookieValue(registered);
+  assert.ok(oldRefresh);
+  assert.match(cookieFrom(registered), /HttpOnly/);
+  assert.match(cookieFrom(registered), /SameSite=Lax/);
+
+  const decodedPayload = JSON.parse(Buffer.from(registered.body.accessToken.split(".")[1], "base64url").toString("utf8"));
+  assert.equal(typeof decodedPayload.sid, "string");
+
+  const rotated = await request(testServer.base, "/v1/auth/refresh", {
+    method:"POST",
+    headers:{cookie:`gym_refresh=${encodeURIComponent(oldRefresh)}`}
+  });
+  assert.equal(rotated.status,200);
+  assert.notEqual(refreshCookieValue(rotated), oldRefresh);
+  assert.equal(typeof rotated.body.accessToken, "string");
+  const firstSession = [...testServer.repo.authSessions.values()].find((session) => session.token_hash === hashRefreshToken(oldRefresh));
+  const rotatedSessionId = JSON.parse(Buffer.from(rotated.body.accessToken.split(".")[1], "base64url").toString("utf8")).sid;
+  const rotatedSession = testServer.repo.authSessions.get(rotatedSessionId);
+  assert.ok(firstSession);
+  assert.ok(rotatedSession);
+  assert.equal(rotatedSession.expires_at, firstSession.expires_at);
+
+  const reused = await request(testServer.base, "/v1/auth/refresh", {
+    method:"POST",
+    headers:{cookie:`gym_refresh=${encodeURIComponent(oldRefresh)}`}
+  });
+  assert.equal(reused.status,401);
+
+  const newest = refreshCookieValue(rotated);
+  const familyReuse = await request(testServer.base, "/v1/auth/refresh", {
+    method:"POST",
+    headers:{cookie:`gym_refresh=${encodeURIComponent(newest)}`}
+  });
+  assert.equal(familyReuse.status,401);
+});
+
+test("logout immediately revokes the access session", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"logout@example.com",password:"correct horse battery staple"})
+  });
+  const refresh = refreshCookieValue(registered);
+  const logout = await request(testServer.base, "/v1/auth/logout", {
+    method:"POST",
+    headers:{cookie:`gym_refresh=${encodeURIComponent(refresh)}`}
+  });
+  assert.equal(logout.status,204);
+
+  const me = await request(testServer.base, "/v1/me", {
+    headers:{authorization:`Bearer ${registered.body.accessToken}`}
+  });
+  assert.equal(me.status,401);
+});
+
+test("logout-all revokes every session family and clears the refresh cookie", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const first = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"multi@example.com",password:"correct horse battery staple"})
+  });
+  const second = await request(testServer.base, "/v1/auth/login", {
+    method:"POST",
+    body:JSON.stringify({email:"multi@example.com",password:"correct horse battery staple"})
+  });
+
+  const logoutAll = await request(testServer.base, "/v1/auth/logout-all", {
+    method:"POST",
+    headers:{authorization:`Bearer ${first.body.accessToken}`}
+  });
+  assert.equal(logoutAll.status,200);
+  assert.equal(logoutAll.body.revoked,2);
+  assert.match(cookieFrom(logoutAll), /Max-Age=0/);
+
+  const firstMe = await request(testServer.base, "/v1/me", {
+    headers:{authorization:`Bearer ${first.body.accessToken}`}
+  });
+  const secondMe = await request(testServer.base, "/v1/me", {
+    headers:{authorization:`Bearer ${second.body.accessToken}`}
+  });
+  assert.equal(firstMe.status,401);
+  assert.equal(secondMe.status,401);
+});
+
+test("disabled accounts cannot use existing access or refresh sessions", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"disabled@example.com",password:"correct horse battery staple"})
+  });
+  const refresh = refreshCookieValue(registered);
+  const userId = JSON.parse(Buffer.from(registered.body.accessToken.split(".")[1], "base64url").toString("utf8")).sub;
+  const user = testServer.repo.users.get(userId);
+  user.status = "suspended";
+
+  const me = await request(testServer.base, "/v1/me", {
+    headers:{authorization:`Bearer ${registered.body.accessToken}`}
+  });
+  const refreshResult = await request(testServer.base, "/v1/auth/refresh", {
+    method:"POST",
+    headers:{cookie:`gym_refresh=${encodeURIComponent(refresh)}`}
+  });
+  assert.equal(me.status,401);
+  assert.equal(refreshResult.status,401);
+});
+
+test("lists and revokes only the requesting user's sessions", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const a = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"sessions-a@example.com",password:"correct horse battery staple"})
+  });
+  const b = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"sessions-b@example.com",password:"correct horse battery staple"})
+  });
+
+  const listA = await request(testServer.base, "/v1/auth/sessions", {
+    headers:{authorization:`Bearer ${a.body.accessToken}`}
+  });
+  assert.equal(listA.status,200);
+  assert.equal(listA.body.sessions.length,1);
+
+  const foreignDelete = await request(testServer.base, "/v1/auth/sessions/" + listA.body.sessions[0].id, {
+    method:"DELETE",
+    headers:{authorization:`Bearer ${b.body.accessToken}`}
+  });
+  assert.equal(foreignDelete.status,404);
+
+  const ownDelete = await request(testServer.base, "/v1/auth/sessions/" + listA.body.sessions[0].id, {
+    method:"DELETE",
+    headers:{authorization:`Bearer ${a.body.accessToken}`}
+  });
+  assert.equal(ownDelete.status,200);
+
+  const me = await request(testServer.base, "/v1/me", {
+    headers:{authorization:`Bearer ${a.body.accessToken}`}
+  });
+  assert.equal(me.status,401);
+});
+test("password reset requests do not enumerate accounts and reset tokens are one-time", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+
+  const known = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"recover@example.com",password:"correct horse battery staple"})
+  });
+  assert.equal(known.status,201);
+
+  const knownRequest = await request(testServer.base, "/v1/auth/password-reset/request", {
+    method:"POST",
+    body:JSON.stringify({email:"recover@example.com"})
+  });
+  const unknownRequest = await request(testServer.base, "/v1/auth/password-reset/request", {
+    method:"POST",
+    body:JSON.stringify({email:"missing@example.com"})
+  });
+  assert.equal(knownRequest.status,202);
+  assert.equal(unknownRequest.status,202);
+  assert.deepEqual(
+    { accepted:knownRequest.body.accepted },
+    { accepted:unknownRequest.body.accepted }
+  );
+
+  const rawToken = "development-reset-token-123456789012345678901234567890";
+  await testServer.repo.createPasswordResetToken({
+    id:"123e4567-e89b-12d3-a456-426614174010",
+    userId:JSON.parse(Buffer.from(known.body.accessToken.split(".")[1],"base64url").toString("utf8")).sub,
+    tokenHash:hashRefreshToken(rawToken),
+    expiresAt:new Date(Date.now() + 30 * 60 * 1000)
+  });
+
+  const reset = await request(testServer.base, "/v1/auth/password-reset/confirm", {
+    method:"POST",
+    body:JSON.stringify({token:rawToken,password:"a-new-correct-password-123"})
+  });
+  assert.equal(reset.status,200);
+
+  const reuse = await request(testServer.base, "/v1/auth/password-reset/confirm", {
+    method:"POST",
+    body:JSON.stringify({token:rawToken,password:"another-new-password-123"})
+  });
+  assert.equal(reuse.status,400);
+
+  const oldAccess = await request(testServer.base, "/v1/me", {
+    headers:{authorization:`Bearer ${known.body.accessToken}`}
+  });
+  assert.equal(oldAccess.status,401);
+});
+
+test("auth session listing distinguishes expired sessions from active sessions", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+
+  const first = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"expired-session@example.com",password:"correct horse battery staple"})
+  });
+  await request(testServer.base, "/v1/auth/login", {
+    method:"POST",
+    body:JSON.stringify({email:"expired-session@example.com",password:"correct horse battery staple"})
+  });
+
+  const secondSessionId = [...testServer.repo.authSessions.values()]
+    .filter((session) => session.user_id === JSON.parse(Buffer.from(first.body.accessToken.split(".")[1], "base64url").toString("utf8")).sub)
+    .sort((a,b) => b.created_at.localeCompare(a.created_at))[0].id;
+  const secondSession = testServer.repo.authSessions.get(secondSessionId);
+  assert.ok(secondSession);
+  secondSession.expires_at = new Date(Date.now() - 1000).toISOString();
+
+  const list = await request(testServer.base, "/v1/auth/sessions", {
+    headers:{authorization:`Bearer ${first.body.accessToken}`}
+  });
+  assert.equal(list.status,200);
+  const expired = list.body.sessions.find((session) => session.id === secondSessionId);
+  const current = list.body.sessions.find((session) => session.isCurrent);
+  assert.equal(expired.status,"expired");
+  assert.equal(current.status,"active");
+});
+
+test("password reset invalidates every active device session", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+
+  const first = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"reset-all@example.com",password:"correct horse battery staple"})
+  });
+  const second = await request(testServer.base, "/v1/auth/login", {
+    method:"POST",
+    body:JSON.stringify({email:"reset-all@example.com",password:"correct horse battery staple"})
+  });
+
+  const rawToken = "development-reset-token-abcdef123456789012345678901234567890";
+  const userId = JSON.parse(Buffer.from(first.body.accessToken.split(".")[1], "base64url").toString("utf8")).sub;
+  await testServer.repo.createPasswordResetToken({
+    id:"123e4567-e89b-12d3-a456-426614174012",
+    userId,
+    tokenHash:hashRefreshToken(rawToken),
+    expiresAt:new Date(Date.now() + 30 * 60 * 1000)
+  });
+
+  const reset = await request(testServer.base, "/v1/auth/password-reset/confirm", {
+    method:"POST",
+    body:JSON.stringify({token:rawToken,password:"a-new-correct-password-123"})
+  });
+  assert.equal(reset.status,200);
+
+  const firstMe = await request(testServer.base, "/v1/me", {
+    headers:{authorization:`Bearer ${first.body.accessToken}`}
+  });
+  const secondMe = await request(testServer.base, "/v1/me", {
+    headers:{authorization:`Bearer ${second.body.accessToken}`}
+  });
+  assert.equal(firstMe.status,401);
+  assert.equal(secondMe.status,401);
+
+  const sessions = await request(testServer.base, "/v1/auth/login", {
+    method:"POST",
+    body:JSON.stringify({email:"reset-all@example.com",password:"a-new-correct-password-123"})
+  });
+  assert.equal(sessions.status,200);
+});
+
+test("account deletion requires password confirmation and removes the account", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"delete@example.com",password:"correct horse battery staple"})
+  });
+  const bad = await request(testServer.base, "/v1/auth/delete-account", {
+    method:"POST",
+    headers:{authorization:`Bearer ${registered.body.accessToken}`},
+    body:JSON.stringify({password:"wrong-password-123"})
+  });
+  assert.equal(bad.status,401);
+
+  const deleted = await request(testServer.base, "/v1/auth/delete-account", {
+    method:"POST",
+    headers:{authorization:`Bearer ${registered.body.accessToken}`},
+    body:JSON.stringify({password:"correct horse battery staple"})
+  });
+  assert.equal(deleted.status,200);
+  assert.equal(deleted.body.deleted,true);
+  assert.equal(testServer.repo.accountDeletionAudit.length,1);
+
+  const me = await request(testServer.base, "/v1/me", {
+    headers:{authorization:`Bearer ${registered.body.accessToken}`}
+  });
+  assert.equal(me.status,401);
+
+  const login = await request(testServer.base, "/v1/auth/login", {
+    method:"POST",
+    body:JSON.stringify({email:"delete@example.com",password:"correct horse battery staple"})
+  });
+  assert.equal(login.status,401);
+});
+test("logout revokes the access session even when the refresh cookie is unavailable", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"logout-no-cookie@example.com",password:"correct horse battery staple"})
+  });
+
+  const logout = await request(testServer.base, "/v1/auth/logout", {
+    method:"POST",
+    headers:{authorization:`Bearer ${registered.body.accessToken}`}
+  });
+  assert.equal(logout.status,204);
+
+  const me = await request(testServer.base, "/v1/me", {
+    headers:{authorization:`Bearer ${registered.body.accessToken}`}
+  });
+  assert.equal(me.status,401);
+});
+
+test("revoking the current device session clears the refresh cookie and invalidates the access token", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"revoke-current@example.com",password:"correct horse battery staple"})
+  });
+  const currentSessionId = JSON.parse(Buffer.from(registered.body.accessToken.split(".")[1], "base64url").toString("utf8")).sid;
+
+  const revoked = await request(testServer.base, "/v1/auth/sessions/" + currentSessionId, {
+    method:"DELETE",
+    headers:{authorization:`Bearer ${registered.body.accessToken}`}
+  });
+  assert.equal(revoked.status,200);
+  assert.equal(revoked.body.current,true);
+  assert.match(cookieFrom(revoked), /Max-Age=0/);
+
+  const me = await request(testServer.base, "/v1/me", {
+    headers:{authorization:`Bearer ${registered.body.accessToken}`}
+  });
+  assert.equal(me.status,401);
+});
+
+test("session management marks the current session and exposes revocation state", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+
+  const first = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"session-state@example.com",password:"correct horse battery staple"})
+  });
+  const second = await request(testServer.base, "/v1/auth/login", {
+    method:"POST",
+    body:JSON.stringify({email:"session-state@example.com",password:"correct horse battery staple"})
+  });
+
+  const list = await request(testServer.base, "/v1/auth/sessions", {
+    headers:{authorization:`Bearer ${first.body.accessToken}`}
+  });
+  assert.equal(list.status,200);
+  assert.equal(list.body.sessions.length,2);
+  assert.equal(list.body.sessions.filter((session) => session.isCurrent).length,1);
+  assert.equal(list.body.sessions.filter((session) => session.status === "active").length,2);
+  assert.equal(list.body.sessions.filter((session) => !session.revoked_at).length,2);
+  assert.notEqual(second.body.accessToken, first.body.accessToken);
+});
+
+test("creates a private personal workspace automatically for each new account", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+
+  const first = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"workspace-one@example.com",password:"correct horse battery staple"})
+  });
+  const second = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"workspace-two@example.com",password:"correct horse battery staple"})
+  });
+  assert.equal(first.status,201);
+  assert.equal(second.status,201);
+
+  const firstUserId = JSON.parse(Buffer.from(first.body.accessToken.split(".")[1],"base64url").toString("utf8")).sub;
+  const firstList = await request(testServer.base, "/v1/tenants", {
+    headers:{authorization:"Bearer " + first.body.accessToken}
+  });
+  const secondList = await request(testServer.base, "/v1/tenants", {
+    headers:{authorization:"Bearer " + second.body.accessToken}
+  });
+
+  assert.equal(firstList.status,200);
+  assert.equal(firstList.body.tenants.length,1);
+  assert.equal(firstList.body.tenants[0].id,firstUserId);
+  assert.equal(firstList.body.tenants[0].kind,"personal");
+  assert.equal(firstList.body.tenants[0].role,"owner");
+  assert.equal(firstList.body.tenants[0].membership_status,"active");
+  assert.equal(secondList.body.tenants.length,1);
+  assert.notEqual(firstList.body.tenants[0].id,secondList.body.tenants[0].id);
+});
+
+test("creates gym workspaces with owner membership and rejects invalid or duplicate slugs", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"workspace-owner@example.com",password:"correct horse battery staple"})
+  });
+  const headers = {authorization:"Bearer " + registered.body.accessToken};
+
+  const created = await request(testServer.base, "/v1/tenants", {
+    method:"POST",
+    headers,
+    body:JSON.stringify({name:"Central Fitness",slug:"central-fitness"})
+  });
+  assert.equal(created.status,201);
+  assert.equal(created.body.tenant.name,"Central Fitness");
+  assert.equal(created.body.tenant.slug,"central-fitness");
+  assert.equal(created.body.tenant.kind,"gym");
+  assert.equal(created.body.tenant.role,"owner");
+  assert.equal(created.body.tenant.membership_status,"active");
+
+  const duplicate = await request(testServer.base, "/v1/tenants", {
+    method:"POST",
+    headers,
+    body:JSON.stringify({name:"Another Fitness",slug:"central-fitness"})
+  });
+  assert.equal(duplicate.status,409);
+
+  const badName = await request(testServer.base, "/v1/tenants", {
+    method:"POST",
+    headers,
+    body:JSON.stringify({name:"  "})
+  });
+  assert.equal(badName.status,400);
+
+  const badSlug = await request(testServer.base, "/v1/tenants", {
+    method:"POST",
+    headers,
+    body:JSON.stringify({name:"Valid Workspace",slug:"Not A Slug"})
+  });
+  assert.equal(badSlug.status,400);
+});
+
+test("normalizes a workspace name and generates its URL-safe slug", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"workspace-normalize@example.com",password:"correct horse battery staple"})
+  });
+  const created = await request(testServer.base, "/v1/tenants", {
+    method:"POST",
+    headers:{authorization:"Bearer " + registered.body.accessToken},
+    body:JSON.stringify({name:"  North   Side Fitness  "})
+  });
+  assert.equal(created.status,201);
+  assert.equal(created.body.tenant.name,"North Side Fitness");
+  assert.equal(created.body.tenant.slug,"north-side-fitness");
+});
+
+test("personal workspace owner cannot use gym roster or invitation administration endpoints", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"personal-admin-boundary@example.com",password:"correct horse battery staple"})
+  });
+  const userId = JSON.parse(Buffer.from(registered.body.accessToken.split(".")[1],"base64url").toString("utf8")).sub;
+  const personalTenant = (await request(testServer.base,"/v1/tenants",{
+    headers:{authorization:"Bearer "+registered.body.accessToken}
+  })).body.tenants[0];
+  assert.equal(personalTenant.id,userId);
+  assert.equal(personalTenant.kind,"personal");
+
+  const listMembers = await request(testServer.base,"/v1/tenants/"+personalTenant.id+"/members",{
+    headers:{authorization:"Bearer "+registered.body.accessToken}
+  });
+  assert.equal(listMembers.status,404);
+
+  const invite = await request(testServer.base,"/v1/tenants/"+personalTenant.id+"/invitations",{
+    method:"POST",
+    headers:{authorization:"Bearer "+registered.body.accessToken},
+    body:JSON.stringify({email:"other-person@example.com",role:"coach"})
+  });
+  assert.equal(invite.status,404);
+});
+
+test("gym workspace membership does not leak into another user's workspace listing", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const owner = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"workspace-isolation-owner@example.com",password:"correct horse battery staple"})
+  });
+  const visitor = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"workspace-isolation-visitor@example.com",password:"correct horse battery staple"})
+  });
+  const created = await request(testServer.base, "/v1/tenants", {
+    method:"POST",
+    headers:{authorization:"Bearer " + owner.body.accessToken},
+    body:JSON.stringify({name:"Owner Private Gym",slug:"owner-private-gym"})
+  });
+  const visitorTenants = await request(testServer.base, "/v1/tenants", {
+    headers:{authorization:"Bearer " + visitor.body.accessToken}
+  });
+  assert.equal(created.status,201);
+  assert.equal(visitorTenants.status,200);
+  assert.equal(visitorTenants.body.tenants.length,1);
+  assert.equal(visitorTenants.body.tenants[0].kind,"personal");
+  assert.equal(visitorTenants.body.tenants.some((tenant) => tenant.id === created.body.tenant.id),false);
+});
+
+test("prevents the only gym owner from deleting the account and orphaning the workspace", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"workspace-sole-owner@example.com",password:"correct horse battery staple"})
+  });
+  const created = await request(testServer.base, "/v1/tenants", {
+    method:"POST",
+    headers:{authorization:"Bearer " + registered.body.accessToken},
+    body:JSON.stringify({name:"Owner Protected Gym",slug:"owner-protected-gym"})
+  });
+  assert.equal(created.status,201);
+
+  const deletion = await request(testServer.base, "/v1/auth/delete-account", {
+    method:"POST",
+    headers:{authorization:"Bearer " + registered.body.accessToken},
+    body:JSON.stringify({password:"correct horse battery staple"})
+  });
+  assert.equal(deletion.status,409);
+  assert.match(deletion.body.error.message,/Transfer gym workspace ownership/);
+
+  const me = await request(testServer.base, "/v1/me", {
+    headers:{authorization:"Bearer " + registered.body.accessToken}
+  });
+  assert.equal(me.status,200);
+});
+
+test("allows account deletion when another active owner remains in the gym", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+
+  const first = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"multi-owner-one@example.com",password:"correct horse battery staple"})
+  });
+  const second = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"multi-owner-two@example.com",password:"correct horse battery staple"})
+  });
+  const gym = await request(testServer.base, "/v1/tenants", {
+    method:"POST",
+    headers:{authorization:"Bearer " + first.body.accessToken},
+    body:JSON.stringify({name:"Multi Owner Fitness",slug:"multi-owner-fitness"})
+  });
+  assert.equal(gym.status,201);
+
+  const secondUserId = JSON.parse(Buffer.from(second.body.accessToken.split(".")[1],"base64url").toString("utf8")).sub;
+  testServer.repo.tenantMemberships.set(gym.body.tenant.id + ":" + secondUserId, {
+    tenant_id:gym.body.tenant.id,user_id:secondUserId,role:"owner",status:"active"
+  });
+
+  const deleted = await request(testServer.base, "/v1/auth/delete-account", {
+    method:"POST",
+    headers:{authorization:"Bearer " + first.body.accessToken},
+    body:JSON.stringify({password:"correct horse battery staple"})
+  });
+  assert.equal(deleted.status,200);
+
+  const remaining = await request(testServer.base, "/v1/tenants", {
+    headers:{authorization:"Bearer " + second.body.accessToken}
+  });
+  assert.equal(remaining.status,200);
+  assert.equal(remaining.body.tenants.some((tenant) => tenant.id === gym.body.tenant.id && tenant.role === "owner"),true);
+});
+
+test("tenant invitations require matching email and are single-use", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const owner = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",body:JSON.stringify({email:"invite-owner@example.com",password:"correct horse battery staple"})
+  });
+  const invitee = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",body:JSON.stringify({email:"invitee@example.com",password:"correct horse battery staple"})
+  });
+  const mismatch = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",body:JSON.stringify({email:"wrong-invitee@example.com",password:"correct horse battery staple"})
+  });
+  const gym = await request(testServer.base, "/v1/tenants", {
+    method:"POST",headers:{authorization:"Bearer "+owner.body.accessToken},
+    body:JSON.stringify({name:"Invitation Fitness",slug:"invitation-fitness"})
+  });
+  assert.equal(gym.status,201);
+
+  const issued = await request(testServer.base, "/v1/tenants/"+gym.body.tenant.id+"/invitations", {
+    method:"POST",headers:{authorization:"Bearer "+owner.body.accessToken},
+    body:JSON.stringify({email:"invitee@example.com",role:"coach"})
+  });
+  assert.equal(issued.status,201);
+  assert.equal(issued.body.invitation.status,"pending");
+  assert.equal(issued.body.invitation.email,"invitee@example.com");
+  assert.equal("token_hash" in issued.body.invitation,false);
+  assert.equal(typeof issued.body.developmentToken,"string");
+
+  const list = await request(testServer.base, "/v1/tenants/"+gym.body.tenant.id+"/invitations", {
+    headers:{authorization:"Bearer "+owner.body.accessToken}
+  });
+  assert.equal(list.status,200);
+  assert.equal(list.body.invitations.length,1);
+  assert.equal("token_hash" in list.body.invitations[0],false);
+
+  const wrong = await request(testServer.base, "/v1/tenant-invitations/accept", {
+    method:"POST",headers:{authorization:"Bearer "+mismatch.body.accessToken},
+    body:JSON.stringify({token:issued.body.developmentToken})
+  });
+  assert.equal(wrong.status,403);
+
+  const accepted = await request(testServer.base, "/v1/tenant-invitations/accept", {
+    method:"POST",headers:{authorization:"Bearer "+invitee.body.accessToken},
+    body:JSON.stringify({token:issued.body.developmentToken})
+  });
+  assert.equal(accepted.status,200);
+  assert.equal(accepted.body.tenant.id,gym.body.tenant.id);
+  assert.equal(accepted.body.tenant.role,"coach");
+  assert.equal(accepted.body.tenant.membership_status,"active");
+
+  const tenants = await request(testServer.base, "/v1/tenants", {
+    headers:{authorization:"Bearer "+invitee.body.accessToken}
+  });
+  assert.equal(tenants.body.tenants.some((tenant)=>tenant.id===gym.body.tenant.id),true);
+
+  const replay = await request(testServer.base, "/v1/tenant-invitations/accept", {
+    method:"POST",headers:{authorization:"Bearer "+invitee.body.accessToken},
+    body:JSON.stringify({token:issued.body.developmentToken})
+  });
+  assert.equal(replay.status,400);
+});
+
+test("tenant membership management is tenant-scoped and role-limited", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const owner = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",body:JSON.stringify({email:"tenant-admin-owner@example.com",password:"correct horse battery staple"})
+  });
+  const admin = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",body:JSON.stringify({email:"tenant-admin@example.com",password:"correct horse battery staple"})
+  });
+  const stranger = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",body:JSON.stringify({email:"tenant-stranger@example.com",password:"correct horse battery staple"})
+  });
+  const gym = await request(testServer.base, "/v1/tenants", {
+    method:"POST",headers:{authorization:"Bearer "+owner.body.accessToken},
+    body:JSON.stringify({name:"Access Control Fitness",slug:"access-control-fitness"})
+  });
+  assert.equal(gym.status,201);
+  const adminId=JSON.parse(Buffer.from(admin.body.accessToken.split(".")[1],"base64url").toString("utf8")).sub;
+  testServer.repo.tenantMemberships.set(gym.body.tenant.id+":"+adminId,{
+    tenant_id:gym.body.tenant.id,user_id:adminId,role:"admin",status:"active",joined_at:new Date().toISOString()
+  });
+
+  const deniedRoster = await request(testServer.base, "/v1/tenants/"+gym.body.tenant.id+"/members", {
+    headers:{authorization:"Bearer "+stranger.body.accessToken}
+  });
+  assert.equal(deniedRoster.status,404);
+
+  const forbiddenRole = await request(testServer.base, "/v1/tenants/"+gym.body.tenant.id+"/invitations", {
+    method:"POST",headers:{authorization:"Bearer "+admin.body.accessToken},
+    body:JSON.stringify({email:"another-admin@example.com",role:"admin"})
+  });
+  assert.equal(forbiddenRole.status,403);
+
+  const allowedInvite = await request(testServer.base, "/v1/tenants/"+gym.body.tenant.id+"/invitations", {
+    method:"POST",headers:{authorization:"Bearer "+admin.body.accessToken},
+    body:JSON.stringify({email:"new-member@example.com",role:"member"})
+  });
+  assert.equal(allowedInvite.status,201);
+
+  const roster = await request(testServer.base, "/v1/tenants/"+gym.body.tenant.id+"/members", {
+    headers:{authorization:"Bearer "+admin.body.accessToken}
+  });
+  assert.equal(roster.status,200);
+  assert.ok(roster.body.members.some((member)=>member.user_id===adminId));
+  assert.equal(roster.body.members.some((member)=>Object.hasOwn(member,"password_hash")),false);
+});
+
+test("replacing an invitation invalidates the older token; owners can revoke pending invites", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const owner = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",body:JSON.stringify({email:"invite-replace-owner@example.com",password:"correct horse battery staple"})
+  });
+  const invitee = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",body:JSON.stringify({email:"invite-replace-member@example.com",password:"correct horse battery staple"})
+  });
+  const gym = await request(testServer.base, "/v1/tenants", {
+    method:"POST",headers:{authorization:"Bearer "+owner.body.accessToken},
+    body:JSON.stringify({name:"Replacement Invite Fitness",slug:"replacement-invite-fitness"})
+  });
+  const inviteUrl="/v1/tenants/"+gym.body.tenant.id+"/invitations";
+  const first = await request(testServer.base,inviteUrl,{
+    method:"POST",headers:{authorization:"Bearer "+owner.body.accessToken},
+    body:JSON.stringify({email:"invite-replace-member@example.com",role:"member"})
+  });
+  const second = await request(testServer.base,inviteUrl,{
+    method:"POST",headers:{authorization:"Bearer "+owner.body.accessToken},
+    body:JSON.stringify({email:"invite-replace-member@example.com",role:"member"})
+  });
+  assert.equal(first.status,201);
+  assert.equal(second.status,201);
+  const oldAccept=await request(testServer.base,"/v1/tenant-invitations/accept",{
+    method:"POST",headers:{authorization:"Bearer "+invitee.body.accessToken},
+    body:JSON.stringify({token:first.body.developmentToken})
+  });
+  assert.equal(oldAccept.status,400);
+
+  const revoke=await request(testServer.base,inviteUrl+"/"+second.body.invitation.id,{
+    method:"DELETE",headers:{authorization:"Bearer "+owner.body.accessToken}
+  });
+  assert.equal(revoke.status,200);
+  assert.equal(revoke.body.invitation.status,"revoked");
+  const acceptRevoked=await request(testServer.base,"/v1/tenant-invitations/accept",{
+    method:"POST",headers:{authorization:"Bearer "+invitee.body.accessToken},
+    body:JSON.stringify({token:second.body.developmentToken})
+  });
+  assert.equal(acceptRevoked.status,400);
+});

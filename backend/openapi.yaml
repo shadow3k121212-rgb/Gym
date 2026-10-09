@@ -1,0 +1,383 @@
+openapi: 3.1.0
+info:
+  title: GYM Training API
+  version: 0.3.0
+  description: Authenticated sync API for the GYM local-first training product.
+servers:
+  - url: https://api.example.invalid
+paths:
+  /v1/health:
+    get:
+      operationId: health
+      responses:
+        "200": { description: Service health }
+  /v1/auth/register:
+    post:
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 12, maxLength: 128 }
+      responses:
+        "201": { description: Account created }
+        "409": { description: Email already exists }
+  /v1/auth/login:
+    post:
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 12, maxLength: 128 }
+      responses:
+        "200": { description: Authenticated; refresh cookie issued }
+        "401": { description: Invalid credentials }
+  /v1/auth/refresh:
+    post:
+      security: [{ refreshCookie: [] }]
+      operationId: refreshAuth
+      responses:
+        "200": { description: Rotated access and refresh session }
+        "401": { description: Invalid, expired, revoked, or reused refresh session }
+  /v1/auth/logout:
+    post:
+      operationId: logout
+      responses:
+        "204": { description: Session logged out and refresh cookie cleared }
+  /v1/auth/logout-all:
+    post:
+      security: [{ bearerAuth: [] }]
+      operationId: logoutAll
+      responses:
+        "200":
+          description: All auth sessions revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revoked]
+                properties:
+                  revoked: { type: integer, minimum: 0 }
+        "401": { description: Authentication required }
+  /v1/auth/sessions:
+    get:
+      security: [{ bearerAuth: [] }]
+      operationId: listAuthSessions
+      responses:
+        "200":
+          description: Account auth sessions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sessions]
+                properties:
+                  sessions:
+                    type: array
+                    items: { $ref: "#/components/schemas/AuthSession" }
+        "401": { description: Authentication required }
+  /v1/auth/sessions/{sessionId}:
+    delete:
+      security: [{ bearerAuth: [] }]
+      operationId: revokeAuthSession
+      parameters:
+        - in: path
+          name: sessionId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Session revoked }
+        "400": { description: Invalid session id }
+        "404": { description: Session not found }
+        "401": { description: Authentication required }
+  /v1/ready:
+    get:
+      operationId: ready
+      responses:
+        "200": { description: Service ready }
+        "503": { description: Database unavailable }
+  /v1/me:
+    get:
+      security: [{ bearerAuth: [] }]
+      operationId: me
+      responses:
+        "200": { description: Current athlete }
+        "401": { description: Authentication required }
+  /v1/tenants:
+    get:
+      security: [{ bearerAuth: [] }]
+      operationId: listTenants
+      responses:
+        "200":
+          description: Workspaces the authenticated user actively belongs to
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tenants]
+                properties:
+                  tenants:
+                    type: array
+                    items: { $ref: "#/components/schemas/TenantMembership" }
+        "401": { description: Authentication required }
+    post:
+      security: [{ bearerAuth: [] }]
+      operationId: createGymTenant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 2, maxLength: 80 }
+                slug: { type: string, minLength: 2, maxLength: 62, pattern: "^[a-z0-9]([a-z0-9-]{0,60}[a-z0-9])$" }
+      responses:
+        "201": { description: Gym workspace created; creator becomes owner }
+        "400": { description: Invalid workspace name or slug }
+        "401": { description: Authentication required }
+        "409": { description: Slug already used }
+  /v1/tenants/{tenantId}/members:
+    get:
+      security: [{ bearerAuth: [] }]
+      operationId: listTenantMembers
+      parameters:
+        - { in: path, name: tenantId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { in: query, name: before, schema: { type: string, maxLength: 256 } }
+      responses:
+        "200": { description: Tenant roster visible to an active owner or admin }
+        "403": { description: Active member lacks roster-management permission }
+        "404": { description: Workspace not found }
+  /v1/tenants/{tenantId}/invitations:
+    get:
+      security: [{ bearerAuth: [] }]
+      operationId: listTenantInvitations
+      parameters:
+        - { in: path, name: tenantId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { in: query, name: before, schema: { type: string, maxLength: 256 } }
+      responses:
+        "200": { description: Tenant invitations, never including token hashes }
+        "403": { description: Active member lacks invitation-management permission }
+        "404": { description: Workspace not found }
+    post:
+      security: [{ bearerAuth: [] }]
+      operationId: createTenantInvitation
+      parameters:
+        - { in: path, name: tenantId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, role]
+              properties:
+                email: { type: string, format: email }
+                role: { type: string, enum: [admin, coach, member] }
+      responses:
+        "201": { description: Invitation created; raw token is only delivered via the configured webhook or returned in development mode }
+        "400": { description: Invalid email or role }
+        "403": { description: Actor cannot issue the requested role }
+        "409": { description: Invitee already belongs to this workspace }
+        "503": { description: Invitation delivery unavailable; invitation has been revoked }
+  /v1/tenants/{tenantId}/invitations/{invitationId}:
+    delete:
+      security: [{ bearerAuth: [] }]
+      operationId: revokeTenantInvitation
+      parameters:
+        - { in: path, name: tenantId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: invitationId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Invitation revoked }
+        "403": { description: Actor cannot revoke the invitation }
+        "404": { description: Invitation or workspace not found }
+        "409": { description: Invitation has already been accepted }
+  /v1/tenant-invitations/accept:
+    post:
+      security: [{ bearerAuth: [] }]
+      operationId: acceptTenantInvitation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string, minLength: 40, maxLength: 128 }
+      responses:
+        "200": { description: Active membership created for the account matching the invitation email }
+        "400": { description: Invalid, expired, revoked, or already-used invitation }
+        "403": { description: The invitation email does not match the signed-in account }
+  /v1/sessions:
+    post:
+      security: [{ bearerAuth: [] }]
+      operationId: createSession
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 16, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SessionCreate" }
+      responses:
+        "201": { description: Session persisted }
+        "200": { description: Idempotent replay of the same request }
+        "400": { description: Invalid request or missing referenced data }
+        "409": { description: Idempotency key conflict or other resource conflict }
+    get:
+      security: [{ bearerAuth: [] }]
+      operationId: listSessions
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - in: query
+          name: before
+          description: Opaque cursor returned as nextCursor to fetch the next older page.
+          schema: { type: string, maxLength: 256 }
+      responses:
+        "200":
+          description: Session page
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionPage" }
+        "400": { description: Invalid pagination cursor or limit }
+  /v1/movement-events:
+    post:
+      security: [{ bearerAuth: [] }]
+      operationId: createMovementEvent
+      description: Store validated derived movement metrics. Raw camera video is outside this API by default.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MovementEvent" }
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 16, maxLength: 128 }
+      responses:
+        "201": { description: Event accepted }
+        "200": { description: Idempotent replay of the same event }
+        "404": { description: User does not own the session }
+        "400": { description: Invalid request or referenced exercise }
+        "409": { description: Idempotency key conflict }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: gym_refresh
+  schemas:
+    AuthSession:
+      type: object
+      required: [id, created_at, expires_at, last_seen_at, revoked_at]
+      properties:
+        id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        last_seen_at: { type: string, format: date-time }
+        revoked_at: { type: string, format: date-time, nullable: true }
+        revocation_reason: { type: string, nullable: true }
+    TenantMembership:
+      type: object
+      required: [id, name, slug, kind, tenant_status, role, membership_status, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, minLength: 2, maxLength: 80 }
+        slug: { type: string, minLength: 2, maxLength: 62 }
+        kind: { type: string, enum: [personal, gym] }
+        tenant_status: { type: string, enum: [active, suspended, archived] }
+        role: { type: string, enum: [owner, admin, coach, member] }
+        membership_status: { type: string, enum: [active, suspended, left] }
+        created_at: { type: string, format: date-time }
+    SessionSummary:
+      type: object
+      required: [id, name, source, started_at, completed_at, volume, completed_sets]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        source: { type: string, enum: [manual, camera, wearable] }
+        started_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time, nullable: true }
+        volume: { type: number, minimum: 0 }
+        completed_sets: { type: integer, minimum: 0 }
+    SessionPage:
+      type: object
+      required: [sessions, nextCursor]
+      properties:
+        sessions:
+          type: array
+          items: { $ref: "#/components/schemas/SessionSummary" }
+        nextCursor:
+          type: string
+          nullable: true
+
+    SessionCreate:
+      type: object
+      required: [id, startedAt, source, exercises]
+      properties:
+        id: { type: string, format: uuid }
+        startedAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time, nullable: true }
+        source: { type: string, enum: [manual, camera, wearable] }
+        name: { type: string, maxLength: 120 }
+        exercises:
+          type: array
+          maxItems: 50
+          items: { $ref: "#/components/schemas/ExerciseSession" }
+    ExerciseSession:
+      type: object
+      required: [exerciseId, sets]
+      properties:
+        exerciseId: { type: string }
+        sets:
+          type: array
+          maxItems: 50
+          items: { $ref: "#/components/schemas/WorkoutSet" }
+    WorkoutSet:
+      type: object
+      required: [index, reps, weightKg, completed]
+      properties:
+        index: { type: integer, minimum: 1 }
+        reps: { type: number, minimum: 0, maximum: 1000 }
+        weightKg: { type: number, minimum: 0, maximum: 1000 }
+        completed: { type: boolean }
+        completedAt: { type: string, format: date-time, nullable: true }
+        rpe: { type: number, minimum: 1, maximum: 10, nullable: true }
+    MovementEvent:
+      type: object
+      required: [schemaVersion, sessionId, exerciseId, timestamp, source, reps]
+      properties:
+        schemaVersion: { type: integer, minimum: 1 }
+        sessionId: { type: string, format: uuid }
+        exerciseId: { type: string }
+        timestamp: { type: string, format: date-time }
+        source: { type: string, enum: [manual, camera, wearable] }
+        reps: { type: number, minimum: 0, maximum: 1000 }
+        confidence: { type: number, minimum: 0, maximum: 1, nullable: true }
+        model: { type: string, maxLength: 120, nullable: true }
+        metrics: { type: object, additionalProperties: true }

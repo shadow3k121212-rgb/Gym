@@ -1,0 +1,71 @@
+import { Pool } from "pg";
+
+if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required.");
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const client = await pool.connect();
+
+try {
+  const requiredTables = [
+    "schema_migrations", "users", "user_preferences", "exercises",
+    "workout_plans", "workout_plan_exercises", "workout_sessions",
+    "workout_sets", "movement_events", "consents", "auth_sessions", "password_reset_tokens", "account_deletion_audit", "tenants", "tenant_memberships", "tenant_invitations"
+  ];
+
+  for (const table of requiredTables) {
+    const result = await client.query("select 1 from information_schema.tables where table_schema='public' and table_name=$1", [table]);
+    if (!result.rowCount) throw new Error("Missing table: " + table);
+  }
+
+  const requiredColumns = [
+    ["workout_sessions", "completed_at"],
+    ["workout_sessions", "idempotency_request_hash"],
+    ["movement_events", "reps"],
+    ["movement_events", "idempotency_key"],
+    ["movement_events", "idempotency_request_hash"],
+    ["auth_sessions", "token_hash"],
+    ["auth_sessions", "expires_at"],
+    ["auth_sessions", "revoked_at"],
+    ["auth_sessions", "family_id"],
+    ["password_reset_tokens", "token_hash"],
+    ["password_reset_tokens", "expires_at"],
+    ["account_deletion_audit", "event_type"],
+    ["account_deletion_audit", "subject_digest"],
+    ["tenants", "kind"],
+    ["tenants", "slug"],
+    ["tenant_memberships", "role"],
+    ["tenant_memberships", "status"],
+    ["tenant_invitations", "token_hash"],
+    ["tenant_invitations", "expires_at"]
+  ];
+
+  for (const [table, column] of requiredColumns) {
+    const result = await client.query("select 1 from information_schema.columns where table_schema='public' and table_name=$1 and column_name=$2", [table, column]);
+    if (!result.rowCount) throw new Error("Missing column: " + table + "." + column);
+  }
+
+  const indexes = await client.query("select indexname from pg_indexes where schemaname='public' and indexname in ($1,$2)", ["workout_sessions_user_idempotency_idx", "movement_events_session_idempotency_idx"]);
+  if (indexes.rowCount !== 2) throw new Error("Required idempotency indexes are missing.");
+
+  const invitationIndex = await client.query(
+    "select 1 from pg_indexes where schemaname='public' and indexname=$1",
+    ["tenant_invitations_one_open_per_email_idx"]
+  );
+  if (invitationIndex.rowCount !== 1) throw new Error("Active invitation uniqueness index is missing.");
+
+  const ownerGuard = await client.query(
+    "select 1 from pg_trigger where tgname=$1 and not tgisinternal",
+    ["tenant_memberships_keep_active_owner"]
+  );
+  if (ownerGuard.rowCount !== 1) throw new Error("Tenant owner guard trigger is missing.");
+
+  const migrations = await client.query("select version from schema_migrations order by version");
+  const versions = migrations.rows.map((row) => row.version);
+  const expected = ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011", "012"];
+  if (JSON.stringify(versions) !== JSON.stringify(expected)) throw new Error("Unexpected migration ledger: " + versions.join(","));
+
+  console.log("Database schema verification passed.");
+} finally {
+  client.release();
+  await pool.end();
+}
