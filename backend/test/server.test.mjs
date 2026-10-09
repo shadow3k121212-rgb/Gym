@@ -903,6 +903,23 @@ test("creates gym workspaces with owner membership and rejects invalid or duplic
   assert.equal(badSlug.status,400);
 });
 
+test("normalizes a workspace name and generates its URL-safe slug", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const registered = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"workspace-normalize@example.com",password:"correct horse battery staple"})
+  });
+  const created = await request(testServer.base, "/v1/tenants", {
+    method:"POST",
+    headers:{authorization:"Bearer " + registered.body.accessToken},
+    body:JSON.stringify({name:"  North   Side Fitness  "})
+  });
+  assert.equal(created.status,201);
+  assert.equal(created.body.tenant.name,"North Side Fitness");
+  assert.equal(created.body.tenant.slug,"north-side-fitness");
+});
+
 test("gym workspace membership does not leak into another user's workspace listing", async (t) => {
   const testServer = await makeServer();
   t.after(() => testServer.server.close());
@@ -955,4 +972,42 @@ test("prevents the only gym owner from deleting the account and orphaning the wo
     headers:{authorization:"Bearer " + registered.body.accessToken}
   });
   assert.equal(me.status,200);
+});
+
+test("allows account deletion when another active owner remains in the gym", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+
+  const first = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"multi-owner-one@example.com",password:"correct horse battery staple"})
+  });
+  const second = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",
+    body:JSON.stringify({email:"multi-owner-two@example.com",password:"correct horse battery staple"})
+  });
+  const gym = await request(testServer.base, "/v1/tenants", {
+    method:"POST",
+    headers:{authorization:"Bearer " + first.body.accessToken},
+    body:JSON.stringify({name:"Multi Owner Fitness",slug:"multi-owner-fitness"})
+  });
+  assert.equal(gym.status,201);
+
+  const secondUserId = JSON.parse(Buffer.from(second.body.accessToken.split(".")[1],"base64url").toString("utf8")).sub;
+  testServer.repo.tenantMemberships.set(gym.body.tenant.id + ":" + secondUserId, {
+    tenant_id:gym.body.tenant.id,user_id:secondUserId,role:"owner",status:"active"
+  });
+
+  const deleted = await request(testServer.base, "/v1/auth/delete-account", {
+    method:"POST",
+    headers:{authorization:"Bearer " + first.body.accessToken},
+    body:JSON.stringify({password:"correct horse battery staple"})
+  });
+  assert.equal(deleted.status,200);
+
+  const remaining = await request(testServer.base, "/v1/tenants", {
+    headers:{authorization:"Bearer " + second.body.accessToken}
+  });
+  assert.equal(remaining.status,200);
+  assert.equal(remaining.body.tenants.some((tenant) => tenant.id === gym.body.tenant.id && tenant.role === "owner"),true);
 });

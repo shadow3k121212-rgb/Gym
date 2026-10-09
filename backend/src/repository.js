@@ -199,6 +199,11 @@ export class PostgresRepository {
       return true;
     } catch (error) {
       await client.query("rollback");
+      if (error?.code === "P0001" && error?.constraint === "tenant_memberships_keep_active_owner") {
+        const ownerError = new Error("Transfer gym workspace ownership before deleting this account.");
+        ownerError.code = "TENANT_OWNER_REQUIRED";
+        throw ownerError;
+      }
       throw error;
     } finally {
       client.release();

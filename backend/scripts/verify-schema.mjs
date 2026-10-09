@@ -47,9 +47,15 @@ try {
   const indexes = await client.query("select indexname from pg_indexes where schemaname='public' and indexname in ($1,$2)", ["workout_sessions_user_idempotency_idx", "movement_events_session_idempotency_idx"]);
   if (indexes.rowCount !== 2) throw new Error("Required idempotency indexes are missing.");
 
+  const ownerGuard = await client.query(
+    "select 1 from pg_trigger where tgname=$1 and not tgisinternal",
+    ["tenant_memberships_keep_active_owner"]
+  );
+  if (ownerGuard.rowCount !== 1) throw new Error("Tenant owner guard trigger is missing.");
+
   const migrations = await client.query("select version from schema_migrations order by version");
   const versions = migrations.rows.map((row) => row.version);
-  const expected = ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010"];
+  const expected = ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011"];
   if (JSON.stringify(versions) !== JSON.stringify(expected)) throw new Error("Unexpected migration ledger: " + versions.join(","));
 
   console.log("Database schema verification passed.");

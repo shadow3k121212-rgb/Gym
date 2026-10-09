@@ -32,7 +32,7 @@ Membership in a gym does **not** automatically reveal an athlete's private train
 
 ## Compatibility and migration
 
-Migration `010_tenants.sql` is additive. Existing user IDs anchor personal workspace IDs so the next data-scope migration can map legacy records deterministically without rewriting session identifiers. It does not move, share, or relabel workout rows. New users receive a personal workspace in the same database transaction through a trigger; the in-memory repository mirrors this contract for API tests.
+Migrations `010_tenants.sql` and `011_tenant_owner_guard.sql` are additive. Existing user IDs anchor personal workspace IDs so the next data-scope migration can map legacy records deterministically without rewriting session identifiers. It does not move, share, or relabel workout rows. New users receive a personal workspace in the same database transaction through a trigger; the in-memory repository mirrors this contract for API tests.
 
 Workspace API:
 - `GET /v1/tenants`: returns active memberships of the authenticated user only.

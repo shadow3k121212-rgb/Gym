@@ -44,4 +44,4 @@ Store derived metrics such as rep count, tempo, range-of-motion proxy, symmetry 
 
 ## Multi-tenant direction
 
-A user identity is global; personal and gym workspaces are separate tenants with role-bearing memberships. Tenant-scoped operations must resolve membership on the server and keep athlete ownership/explicit coach visibility in authorization predicates. Never infer access from a client-selected tenant ID alone. See `TENANCY-ARCHITECTURE.md` for current implementation boundaries and follow-up slices.
+A user identity is global; personal and gym workspaces are separate tenants with role-bearing memberships. The database has an owner guard trigger that serializes membership changes and prevents removal of the last active gym owner. Tenant-scoped operations must resolve membership on the server and keep athlete ownership/explicit coach visibility in authorization predicates. Never infer access from a client-selected tenant ID alone. See `TENANCY-ARCHITECTURE.md` for current implementation boundaries and follow-up slices.
