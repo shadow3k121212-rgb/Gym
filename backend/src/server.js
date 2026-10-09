@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { createRefreshToken, getRefreshTtlSeconds, hashPassword, hashRefreshToken, refreshExpiry, verifyPassword, issueAccessToken, verifyAccessToken, extractBearerToken } from "./auth.js";
-import { ValidationError, normalizeEmail, validatePassword, validateSession, validateMovementEvent, validateTenantName, validateTenantSlug, slugifyTenantName } from "./validation.js";
+import { ValidationError, normalizeEmail, validatePassword, validateSession, validateMovementEvent, validateTenantName, validateTenantSlug, slugifyTenantName, validateTenantInvitationRole } from "./validation.js";
 import { decodeSessionCursor, normalizePageLimit, PaginationError } from "./pagination.js";
 
 const JSON_LIMIT = 256 * 1024;
 const REFRESH_COOKIE = "gym_refresh";
+const TENANT_INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 async function readJson(req) {
   let bytes = 0;
@@ -146,7 +148,7 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
       "access-control-allow-origin": corsOrigin === "*" ? "*" : origin === corsOrigin ? corsOrigin : "",
       "vary": "Origin",
       "access-control-allow-headers": "Authorization, Content-Type, Idempotency-Key, X-Request-Id",
-      "access-control-allow-methods": "GET,POST,OPTIONS",
+      "access-control-allow-methods": "GET,POST,DELETE,OPTIONS",
       ...(corsOrigin !== "*" ? { "access-control-allow-credentials":"true" } : {})
     };
     if (req.method === "OPTIONS") return send(res, 204, {}, { ...cors, "x-request-id": id });
@@ -327,6 +329,113 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
         return send(res, 201, { tenant }, { ...cors, "x-request-id":id });
       }
 
+      const tenantResource = path.match(/^\\/v1\\/tenants\\/([^/]+)\\/(members|invitations)(?:\\/([^/]+))?$/);
+      if (tenantResource) {
+        const [, rawTenantId, resource, rawResourceId] = tenantResource;
+        if (!UUID_PATTERN.test(rawTenantId)) return okError(res, 400, "Invalid workspace id.", id);
+        const tenantId = rawTenantId.toLowerCase();
+
+        if (resource === "members" && !rawResourceId && req.method === "GET") {
+          const params = new URL(req.url, "http://gym.local").searchParams;
+          const limit = normalizePageLimit(params.get("limit"), 20, 100);
+          const before = decodeSessionCursor(params.get("before"));
+          const page = await repo.listTenantMembers(user.id, tenantId, { limit, before });
+          return send(res, 200, { members:page.members, nextCursor:page.nextCursor }, { ...cors, "x-request-id":id });
+        }
+
+        if (resource === "invitations" && !rawResourceId && req.method === "GET") {
+          const params = new URL(req.url, "http://gym.local").searchParams;
+          const limit = normalizePageLimit(params.get("limit"), 20, 100);
+          const before = decodeSessionCursor(params.get("before"));
+          const page = await repo.listTenantInvitations(user.id, tenantId, { limit, before });
+          return send(res, 200, { invitations:page.invitations, nextCursor:page.nextCursor }, { ...cors, "x-request-id":id });
+        }
+
+        if (resource === "invitations" && !rawResourceId && req.method === "POST") {
+          const body = await readJson(req);
+          const email = normalizeEmail(body.email);
+          const role = validateTenantInvitationRole(body.role);
+          const rawToken = createRefreshToken();
+          const expiresAt = new Date(Date.now() + TENANT_INVITATION_TTL_MS);
+          const invitation = await repo.createTenantInvitation({
+            actorUserId:user.id,
+            tenantId,
+            id:randomUUID(),
+            email,
+            role,
+            tokenHash:hashRefreshToken(rawToken),
+            expiresAt
+          });
+
+          const webhookUrl = process.env.TENANT_INVITATION_WEBHOOK_URL;
+          let developmentToken = null;
+          if (!webhookUrl) {
+            if (process.env.NODE_ENV === "production") {
+              try { await repo.revokeTenantInvitation(user.id, tenantId, invitation.id); } catch {}
+              return okError(res, 503, "Invitation delivery is not configured.", id);
+            }
+            developmentToken = rawToken;
+          } else {
+            let delivered = false;
+            try {
+              const response = await fetch(webhookUrl, {
+                method:"POST",
+                headers:{
+                  "content-type":"application/json",
+                  "x-gym-delivery-secret":process.env.TENANT_INVITATION_WEBHOOK_SECRET
+                },
+                body:JSON.stringify({
+                  email,
+                  token:rawToken,
+                  role,
+                  expiresAt:expiresAt.toISOString(),
+                  tenant:{id:invitation.tenant.id,name:invitation.tenant.name,slug:invitation.tenant.slug},
+                  requestId:id
+                }),
+                signal:AbortSignal.timeout(5000)
+              });
+              delivered = response.ok;
+            } catch {}
+            if (!delivered) {
+              try { await repo.revokeTenantInvitation(user.id, tenantId, invitation.id); } catch {}
+              return okError(res, 503, "Invitation delivery failed; the invitation was revoked. Please retry.", id);
+            }
+          }
+
+          const publicInvitation = {
+            id:invitation.id,
+            tenant_id:invitation.tenant_id,
+            email:invitation.email,
+            role:invitation.role,
+            invited_by_user_id:invitation.invited_by_user_id,
+            expires_at:invitation.expires_at,
+            accepted_at:invitation.accepted_at,
+            revoked_at:invitation.revoked_at,
+            created_at:invitation.created_at,
+            status:invitation.status
+          };
+          return send(res, 201, {
+            invitation:publicInvitation,
+            ...(developmentToken ? { developmentToken } : {})
+          }, { ...cors, "x-request-id":id });
+        }
+
+        if (resource === "invitations" && rawResourceId && req.method === "DELETE") {
+          if (!UUID_PATTERN.test(rawResourceId)) return okError(res, 400, "Invalid invitation id.", id);
+          const invitation = await repo.revokeTenantInvitation(user.id, tenantId, rawResourceId.toLowerCase());
+          return send(res, 200, { invitation }, { ...cors, "x-request-id":id });
+        }
+      }
+
+      if (path === "/v1/tenant-invitations/accept" && req.method === "POST") {
+        const body = await readJson(req);
+        if (typeof body.token !== "string" || body.token.length < 40 || body.token.length > 128) {
+          return okError(res, 400, "Invitation is invalid, expired, or already used.", id);
+        }
+        const tenant = await repo.acceptTenantInvitation(user.id, hashRefreshToken(body.token));
+        return send(res, 200, { tenant }, { ...cors, "x-request-id":id });
+      }
+
       if (path === "/v1/auth/delete-account" && req.method === "POST") {
         const body = await readJson(req);
         const password = validatePassword(body.password);
@@ -402,6 +511,9 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
       if (error?.code === "DUPLICATE_EMAIL") return okError(res, 409, "Email already registered.", id);
       if (error?.code === "TENANT_SLUG_CONFLICT") return okError(res, 409, "Workspace slug already exists. Choose a different slug.", id);
       if (error?.code === "TENANT_OWNER_REQUIRED") return okError(res, 409, error.message, id);
+      if (["FORBIDDEN","TENANT_ROLE_FORBIDDEN","INVITATION_EMAIL_MISMATCH","TENANT_MEMBERSHIP_SUSPENDED"].includes(error?.code)) return okError(res, 403, error.message, id);
+      if (["TENANT_MEMBERSHIP_EXISTS","TENANT_INVITATION_CONFLICT","TENANT_INVITATION_FINAL"].includes(error?.code)) return okError(res, 409, error.message, id);
+      if (error?.code === "INVALID_INVITATION") return okError(res, 400, error.message, id);
       if (error?.code === "NOT_FOUND") return okError(res, 404, error.message, id);
       const status = Number.isInteger(error?.statusCode) ? error.statusCode : 500;
       console.error(JSON.stringify({ level:"error", requestId:id, durationMs:Date.now()-started, method:req.method, path, message:error?.message }));

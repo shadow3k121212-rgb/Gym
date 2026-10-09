@@ -1011,3 +1011,154 @@ test("allows account deletion when another active owner remains in the gym", asy
   assert.equal(remaining.status,200);
   assert.equal(remaining.body.tenants.some((tenant) => tenant.id === gym.body.tenant.id && tenant.role === "owner"),true);
 });
+
+test("tenant invitations require matching email and are single-use", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const owner = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",body:JSON.stringify({email:"invite-owner@example.com",password:"correct horse battery staple"})
+  });
+  const invitee = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",body:JSON.stringify({email:"invitee@example.com",password:"correct horse battery staple"})
+  });
+  const mismatch = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",body:JSON.stringify({email:"wrong-invitee@example.com",password:"correct horse battery staple"})
+  });
+  const gym = await request(testServer.base, "/v1/tenants", {
+    method:"POST",headers:{authorization:"Bearer "+owner.body.accessToken},
+    body:JSON.stringify({name:"Invitation Fitness",slug:"invitation-fitness"})
+  });
+  assert.equal(gym.status,201);
+
+  const issued = await request(testServer.base, "/v1/tenants/"+gym.body.tenant.id+"/invitations", {
+    method:"POST",headers:{authorization:"Bearer "+owner.body.accessToken},
+    body:JSON.stringify({email:"invitee@example.com",role:"coach"})
+  });
+  assert.equal(issued.status,201);
+  assert.equal(issued.body.invitation.status,"pending");
+  assert.equal(issued.body.invitation.email,"invitee@example.com");
+  assert.equal("token_hash" in issued.body.invitation,false);
+  assert.equal(typeof issued.body.developmentToken,"string");
+
+  const list = await request(testServer.base, "/v1/tenants/"+gym.body.tenant.id+"/invitations", {
+    headers:{authorization:"Bearer "+owner.body.accessToken}
+  });
+  assert.equal(list.status,200);
+  assert.equal(list.body.invitations.length,1);
+  assert.equal("token_hash" in list.body.invitations[0],false);
+
+  const wrong = await request(testServer.base, "/v1/tenant-invitations/accept", {
+    method:"POST",headers:{authorization:"Bearer "+mismatch.body.accessToken},
+    body:JSON.stringify({token:issued.body.developmentToken})
+  });
+  assert.equal(wrong.status,403);
+
+  const accepted = await request(testServer.base, "/v1/tenant-invitations/accept", {
+    method:"POST",headers:{authorization:"Bearer "+invitee.body.accessToken},
+    body:JSON.stringify({token:issued.body.developmentToken})
+  });
+  assert.equal(accepted.status,200);
+  assert.equal(accepted.body.tenant.id,gym.body.tenant.id);
+  assert.equal(accepted.body.tenant.role,"coach");
+  assert.equal(accepted.body.tenant.membership_status,"active");
+
+  const tenants = await request(testServer.base, "/v1/tenants", {
+    headers:{authorization:"Bearer "+invitee.body.accessToken}
+  });
+  assert.equal(tenants.body.tenants.some((tenant)=>tenant.id===gym.body.tenant.id),true);
+
+  const replay = await request(testServer.base, "/v1/tenant-invitations/accept", {
+    method:"POST",headers:{authorization:"Bearer "+invitee.body.accessToken},
+    body:JSON.stringify({token:issued.body.developmentToken})
+  });
+  assert.equal(replay.status,400);
+});
+
+test("tenant membership management is tenant-scoped and role-limited", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const owner = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",body:JSON.stringify({email:"tenant-admin-owner@example.com",password:"correct horse battery staple"})
+  });
+  const admin = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",body:JSON.stringify({email:"tenant-admin@example.com",password:"correct horse battery staple"})
+  });
+  const stranger = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",body:JSON.stringify({email:"tenant-stranger@example.com",password:"correct horse battery staple"})
+  });
+  const gym = await request(testServer.base, "/v1/tenants", {
+    method:"POST",headers:{authorization:"Bearer "+owner.body.accessToken},
+    body:JSON.stringify({name:"Access Control Fitness",slug:"access-control-fitness"})
+  });
+  assert.equal(gym.status,201);
+  const adminId=JSON.parse(Buffer.from(admin.body.accessToken.split(".")[1],"base64url").toString("utf8")).sub;
+  testServer.repo.tenantMemberships.set(gym.body.tenant.id+":"+adminId,{
+    tenant_id:gym.body.tenant.id,user_id:adminId,role:"admin",status:"active",joined_at:new Date().toISOString()
+  });
+
+  const deniedRoster = await request(testServer.base, "/v1/tenants/"+gym.body.tenant.id+"/members", {
+    headers:{authorization:"Bearer "+stranger.body.accessToken}
+  });
+  assert.equal(deniedRoster.status,404);
+
+  const forbiddenRole = await request(testServer.base, "/v1/tenants/"+gym.body.tenant.id+"/invitations", {
+    method:"POST",headers:{authorization:"Bearer "+admin.body.accessToken},
+    body:JSON.stringify({email:"another-admin@example.com",role:"admin"})
+  });
+  assert.equal(forbiddenRole.status,403);
+
+  const allowedInvite = await request(testServer.base, "/v1/tenants/"+gym.body.tenant.id+"/invitations", {
+    method:"POST",headers:{authorization:"Bearer "+admin.body.accessToken},
+    body:JSON.stringify({email:"new-member@example.com",role:"member"})
+  });
+  assert.equal(allowedInvite.status,201);
+
+  const roster = await request(testServer.base, "/v1/tenants/"+gym.body.tenant.id+"/members", {
+    headers:{authorization:"Bearer "+admin.body.accessToken}
+  });
+  assert.equal(roster.status,200);
+  assert.ok(roster.body.members.some((member)=>member.user_id===adminId));
+  assert.equal(roster.body.members.some((member)=>Object.hasOwn(member,"password_hash")),false);
+});
+
+test("replacing an invitation invalidates the older token; owners can revoke pending invites", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const owner = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",body:JSON.stringify({email:"invite-replace-owner@example.com",password:"correct horse battery staple"})
+  });
+  const invitee = await request(testServer.base, "/v1/auth/register", {
+    method:"POST",body:JSON.stringify({email:"invite-replace-member@example.com",password:"correct horse battery staple"})
+  });
+  const gym = await request(testServer.base, "/v1/tenants", {
+    method:"POST",headers:{authorization:"Bearer "+owner.body.accessToken},
+    body:JSON.stringify({name:"Replacement Invite Fitness",slug:"replacement-invite-fitness"})
+  });
+  const inviteUrl="/v1/tenants/"+gym.body.tenant.id+"/invitations";
+  const first = await request(testServer.base,inviteUrl,{
+    method:"POST",headers:{authorization:"Bearer "+owner.body.accessToken},
+    body:JSON.stringify({email:"invite-replace-member@example.com",role:"member"})
+  });
+  const second = await request(testServer.base,inviteUrl,{
+    method:"POST",headers:{authorization:"Bearer "+owner.body.accessToken},
+    body:JSON.stringify({email:"invite-replace-member@example.com",role:"member"})
+  });
+  assert.equal(first.status,201);
+  assert.equal(second.status,201);
+  const oldAccept=await request(testServer.base,"/v1/tenant-invitations/accept",{
+    method:"POST",headers:{authorization:"Bearer "+invitee.body.accessToken},
+    body:JSON.stringify({token:first.body.developmentToken})
+  });
+  assert.equal(oldAccept.status,400);
+
+  const revoke=await request(testServer.base,inviteUrl+"/"+second.body.invitation.id,{
+    method:"DELETE",headers:{authorization:"Bearer "+owner.body.accessToken}
+  });
+  assert.equal(revoke.status,200);
+  assert.equal(revoke.body.invitation.status,"revoked");
+  const acceptRevoked=await request(testServer.base,"/v1/tenant-invitations/accept",{
+    method:"POST",headers:{authorization:"Bearer "+invitee.body.accessToken},
+    body:JSON.stringify({token:second.body.developmentToken})
+  });
+  assert.equal(acceptRevoked.status,400);
+});

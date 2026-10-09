@@ -21,6 +21,8 @@ JWT_SECRET='replace-with-a-32-character-minimum-secret' \
 CORS_ORIGIN='http://localhost:4173' \
 PASSWORD_RESET_WEBHOOK_URL='https://delivery.example.test/password-reset' \
 PASSWORD_RESET_WEBHOOK_SECRET='replace-with-a-delivery-secret' \
+TENANT_INVITATION_WEBHOOK_URL='https://delivery.example.test/tenant-invitation' \
+TENANT_INVITATION_WEBHOOK_SECRET='replace-with-a-delivery-secret' \
 npm start
 ```
 
@@ -36,6 +38,10 @@ npm start
 - `POST /v1/auth/password-reset/request` / `POST /v1/auth/password-reset/confirm` — bounded, non-enumerating password recovery.
 - `POST /v1/auth/delete-account` — password-confirmed transactional account deletion.
 - `GET /v1/me` — authenticated current-user lookup.
+- `GET /v1/tenants` / `POST /v1/tenants` — account-scoped workspace list and gym workspace creation.
+- `GET /v1/tenants/:id/members` — owner/admin roster with cursor pagination.
+- `GET /v1/tenants/:id/invitations`, `POST /v1/tenants/:id/invitations`, `DELETE /v1/tenants/:id/invitations/:invitationId` — role-checked invite lifecycle.
+- `POST /v1/tenant-invitations/accept` — accepts a one-time invite for the matching signed-in account email.
 - `POST /v1/sessions` — transactional session/set persistence with user-scoped idempotency.
 - `GET /v1/sessions` — authenticated session history.
 - `POST /v1/movement-events` — authenticated derived movement metrics with event-level idempotency.
@@ -71,3 +77,7 @@ Raw camera video is outside the persistence model by default. Future computer-vi
 ### Password recovery delivery
 
 Set `PASSWORD_RESET_WEBHOOK_URL` to an authenticated service that sends the recovery token through the product's managed email provider. The API always returns the same accepted response shape for valid-looking reset requests so account existence is not disclosed. In production, both the webhook URL and `PASSWORD_RESET_WEBHOOK_SECRET` are required at startup.
+
+### Tenant invitation delivery
+
+Configure `TENANT_INVITATION_WEBHOOK_URL` and `TENANT_INVITATION_WEBHOOK_SECRET` to deliver invitations through a managed email service. In production both are mandatory and the URL must be HTTPS. The webhook receives the recipient email, one-time invitation token, workspace display details, role and expiry with the shared secret in `x-gym-delivery-secret`. A failed/timeout delivery causes GYM to revoke the invitation and return a retryable service error. Without a webhook, only non-production mode returns a development token for local integration tests.

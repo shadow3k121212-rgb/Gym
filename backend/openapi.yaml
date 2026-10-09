@@ -149,6 +149,80 @@ paths:
         "400": { description: Invalid workspace name or slug }
         "401": { description: Authentication required }
         "409": { description: Slug already used }
+  /v1/tenants/{tenantId}/members:
+    get:
+      security: [{ bearerAuth: [] }]
+      operationId: listTenantMembers
+      parameters:
+        - { in: path, name: tenantId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { in: query, name: before, schema: { type: string, maxLength: 256 } }
+      responses:
+        "200": { description: Tenant roster visible to an active owner or admin }
+        "403": { description: Active member lacks roster-management permission }
+        "404": { description: Workspace not found }
+  /v1/tenants/{tenantId}/invitations:
+    get:
+      security: [{ bearerAuth: [] }]
+      operationId: listTenantInvitations
+      parameters:
+        - { in: path, name: tenantId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { in: query, name: before, schema: { type: string, maxLength: 256 } }
+      responses:
+        "200": { description: Tenant invitations, never including token hashes }
+        "403": { description: Active member lacks invitation-management permission }
+        "404": { description: Workspace not found }
+    post:
+      security: [{ bearerAuth: [] }]
+      operationId: createTenantInvitation
+      parameters:
+        - { in: path, name: tenantId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, role]
+              properties:
+                email: { type: string, format: email }
+                role: { type: string, enum: [admin, coach, member] }
+      responses:
+        "201": { description: Invitation created; raw token is only delivered via the configured webhook or returned in development mode }
+        "400": { description: Invalid email or role }
+        "403": { description: Actor cannot issue the requested role }
+        "409": { description: Invitee already belongs to this workspace }
+        "503": { description: Invitation delivery unavailable; invitation has been revoked }
+  /v1/tenants/{tenantId}/invitations/{invitationId}:
+    delete:
+      security: [{ bearerAuth: [] }]
+      operationId: revokeTenantInvitation
+      parameters:
+        - { in: path, name: tenantId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: invitationId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Invitation revoked }
+        "403": { description: Actor cannot revoke the invitation }
+        "404": { description: Invitation or workspace not found }
+        "409": { description: Invitation has already been accepted }
+  /v1/tenant-invitations/accept:
+    post:
+      security: [{ bearerAuth: [] }]
+      operationId: acceptTenantInvitation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string, minLength: 40, maxLength: 128 }
+      responses:
+        "200": { description: Active membership created for the account matching the invitation email }
+        "400": { description: Invalid, expired, revoked, or already-used invitation }
+        "403": { description: The invitation email does not match the signed-in account }
   /v1/sessions:
     post:
       security: [{ bearerAuth: [] }]

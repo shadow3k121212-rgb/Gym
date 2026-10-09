@@ -7,7 +7,7 @@ A GYM account represents a person, not a gym. A person may own a personal worksp
 The first schema/API slice introduces:
 - `tenants` for personal and gym workspaces
 - `tenant_memberships` for explicit active membership and role
-- `tenant_invitations` as the persistence contract for a later one-time invite/accept flow
+- `tenant_invitations` with hashed tokens, expiry, replacement/revocation and matching-email acceptance
 - automatic personal-workspace provisioning for existing and new accounts
 - authenticated workspace list/create APIs
 - an account-deletion guard preventing the only gym owner from orphaning the organization
@@ -24,7 +24,7 @@ Membership in a gym does **not** automatically reveal an athlete's private train
 
 ## Next implementation slices
 
-1. Invitation delivery/acceptance, member listing and owner transfer, with one-time hashed tokens, expiry, email matching and audit trail.
+1. Owner transfer/offboarding, membership status administration, invitation audit history and operational support workflows.
 2. Tenant-scoped plans/sessions only where product permissions require workspace visibility; preserve athlete ownership and private history.
 3. Authorization matrix tests across two workspaces and all roles; repository queries must scope by tenant and owner/assignment.
 4. Optional PostgreSQL row-level security as defense-in-depth, not a replacement for server authorization.
@@ -37,6 +37,10 @@ Migrations `010_tenants.sql` and `011_tenant_owner_guard.sql` are additive. Exis
 Workspace API:
 - `GET /v1/tenants`: returns active memberships of the authenticated user only.
 - `POST /v1/tenants`: creates a gym workspace and grants the creator the owner role.
+- Owner/admin-gated roster and invitation listing are tenant scoped and cursor paginated.
+- Invitation issuance enforces role hierarchy; admin may invite coaches/members, while only an owner may invite admins.
+- Acceptance checks signed-in account email, token hash, expiry, revocation and one-time use; active memberships are not overwritten.
+- Production invitation delivery uses a configured HTTPS webhook; delivery failure revokes the just-created invitation.
 - Duplicate slugs return a conflict; malformed names/slugs return a client error.
 
 This is the multi-tenant foundation, not a claim that team sharing, invitations, billing or tenant-scoped workout access are already complete.

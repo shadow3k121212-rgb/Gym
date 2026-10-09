@@ -36,6 +36,23 @@ if (process.env.NODE_ENV === "production") {
   }
 }
 
+if (process.env.NODE_ENV === "production" && !process.env.TENANT_INVITATION_WEBHOOK_URL) {
+  console.error("TENANT_INVITATION_WEBHOOK_URL is required in production.");
+  process.exit(1);
+}
+if (process.env.TENANT_INVITATION_WEBHOOK_URL && !process.env.TENANT_INVITATION_WEBHOOK_SECRET) {
+  console.error("TENANT_INVITATION_WEBHOOK_SECRET is required when invitation delivery is configured.");
+  process.exit(1);
+}
+if (process.env.NODE_ENV === "production") {
+  try {
+    if (new URL(process.env.TENANT_INVITATION_WEBHOOK_URL).protocol !== "https:") throw new Error("HTTPS required");
+  } catch {
+    console.error("TENANT_INVITATION_WEBHOOK_URL must use HTTPS in production.");
+    process.exit(1);
+  }
+}
+
 const repo = new PostgresRepository();
 const handler = createApi({ repo, jwtSecret, corsOrigin });
 const server = createServer(handler);
