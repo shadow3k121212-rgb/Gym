@@ -329,7 +329,7 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
         return send(res, 201, { tenant }, { ...cors, "x-request-id":id });
       }
 
-      const tenantResource = path.match(/^\\/v1\\/tenants\\/([^/]+)\\/(members|invitations)(?:\\/([^/]+))?$/);
+      const tenantResource = path.match(/^\/v1\/tenants\/([^/]+)\/(members|invitations)(?:\/([^/]+))?$/);
       if (tenantResource) {
         const [, rawTenantId, resource, rawResourceId] = tenantResource;
         if (!UUID_PATTERN.test(rawTenantId)) return okError(res, 400, "Invalid workspace id.", id);
