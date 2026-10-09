@@ -26,8 +26,8 @@ export function validatePassword(value) {
 
 export function validateTenantName(value) {
   if (typeof value !== "string") throw new ValidationError("Workspace name is required.");
-  const name = value.trim().replace(/\\s+/g, " ");
-  if (name.length < 2 || name.length > 80 || /[\\u0000-\\u001f\\u007f]/.test(name)) {
+  const name = value.trim().replace(/\s+/g, " ");
+  if (name.length < 2 || name.length > 80 || /[\x00-\x1f\x7f]/.test(name)) {
     throw new ValidationError("Workspace name must be 2–80 printable characters.");
   }
   return name;
@@ -45,7 +45,7 @@ export function validateTenantSlug(value) {
 export function slugifyTenantName(value) {
   const slug = String(value ?? "")
     .normalize("NFKD")
-    .replace(/[\\u0300-\\u036f]/g, "")
+    .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
