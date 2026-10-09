@@ -148,3 +148,42 @@ export function getNextSyncRetryAt(queue) {
     .filter(Number.isFinite);
   return times.length ? Math.min(...times) : null;
 }
+
+export function summarizeSyncQueue(queue, { userId = null, nowMs = Date.now() } = {}) {
+  const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+  const ownerId = normalizeOwnerId(userId);
+  const normalized = normalizeSyncQueue(queue);
+  const owned = ownerId ? normalized.filter((item) => item.userId === ownerId) : [];
+  const unowned = normalized.filter((item) => !item.userId);
+  const oldestTimes = owned
+    .map((item) => {
+      const completedAt = item.session.completedAt;
+      const startedAt = item.session.startedAt;
+      const raw = typeof completedAt === "string" && Number.isFinite(Date.parse(completedAt))
+        ? completedAt
+        : startedAt;
+      const timestamp = typeof raw === "string" ? Date.parse(raw) : Number.NaN;
+      return Number.isFinite(timestamp) && timestamp <= now ? timestamp : Number.NaN;
+    })
+    .filter(Number.isFinite);
+  const oldestPendingAt = oldestTimes.length ? new Date(Math.min(...oldestTimes)).toISOString() : null;
+  const staleCount = owned.filter((item) => {
+    const raw = typeof item.session.completedAt === "string" && Number.isFinite(Date.parse(item.session.completedAt))
+      ? item.session.completedAt
+      : item.session.startedAt;
+    const timestamp = typeof raw === "string" ? Date.parse(raw) : Number.NaN;
+    return Number.isFinite(timestamp) && timestamp <= now && now - timestamp >= 24 * 60 * 60 * 1000;
+  }).length;
+
+  return Object.freeze({
+    ownedCount: owned.length,
+    unownedCount: unowned.length,
+    blockedCount: owned.filter((item) => item.blocked).length,
+    dueCount: getDueSyncItems(owned, now).length,
+    scheduledCount: owned.filter((item) =>
+      !item.blocked && item.nextAttemptAt && Date.parse(item.nextAttemptAt) > now
+    ).length,
+    staleCount,
+    oldestPendingAt
+  });
+}
