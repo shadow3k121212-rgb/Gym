@@ -11,8 +11,334 @@ import {
   logoutAll,
   register,
   requestPasswordReset,
-  revokeAuthSession
+  revokeAuthSession,
+  listTenants,
+  createTenant,
+  listTenantMembers,
+  listTenantInvitations,
+  createTenantInvitation,
+  revokeTenantInvitation,
+  acceptTenantInvitation
 } from "./api.js";
+
+
+let tenantStateUserId = null;
+let tenantWorkspaces = [];
+let selectedTenantId = null;
+let tenantMembers = [];
+let tenantInvitations = [];
+let tenantMembersCursor = null;
+let tenantInvitationsCursor = null;
+let tenantDetailMessage = "";
+let tenantActionMessage = "";
+let tenantDevelopmentToken = null;
+let tenantDevelopmentTokenTenantId = null;
+let tenantListSequence = 0;
+let tenantDetailSequence = 0;
+
+function renderTenantManager() {
+  return '<div class="panel-subsection tenant-manager" id="tenant-manager">' +
+    '<div class="eyebrow">GYM WORKSPACES</div>' +
+    '<h4>Gyms and memberships</h4>' +
+    '<p class="micro-note">Your training history stays private. Gym membership unlocks workspace administration; coach access to athlete history is a separate permission layer.</p>' +
+    '<div id="tenant-workspace-list" class="session-list"><div class="micro-note">Loading workspaces…</div></div>' +
+    '<div class="tenant-create-form">' +
+      '<div class="eyebrow">CREATE A GYM</div>' +
+      '<label class="field-label" for="tenant-create-name">Gym or studio name</label>' +
+      '<input class="text-input" id="tenant-create-name" maxlength="80" autocomplete="organization" placeholder="e.g. North Side Fitness">' +
+      '<label class="field-label" for="tenant-create-slug">Workspace URL slug (optional)</label>' +
+      '<input class="text-input" id="tenant-create-slug" maxlength="62" autocapitalize="none" spellcheck="false" placeholder="north-side-fitness">' +
+      '<button class="secondary-button full" data-tenant-action="create-workspace">Create gym workspace</button>' +
+    '</div>' +
+    '<div id="tenant-workspace-detail" class="tenant-workspace-detail"><div class="micro-note">Choose a workspace to view its members and invitations.</div></div>' +
+    '<div class="tenant-accept-form">' +
+      '<div class="eyebrow">JOIN A GYM</div>' +
+      '<label class="field-label" for="tenant-accept-token">Invitation token</label>' +
+      '<input class="text-input" id="tenant-accept-token" autocomplete="off" spellcheck="false" placeholder="Paste the invitation token">' +
+      '<button class="secondary-button full" data-tenant-action="accept-invitation">Accept invitation</button>' +
+    '</div>' +
+    '<div id="tenant-manager-message" class="micro-note" role="status" aria-live="polite"></div>' +
+  '</div>';
+}
+
+function renderTenantWorkspaceList() {
+  const target = document.querySelector("#tenant-workspace-list");
+  if (!target) return;
+  if (!tenantWorkspaces.length) {
+    target.innerHTML = '<div class="micro-note">No workspace memberships yet. Create a gym below or accept an invitation.</div>';
+    return;
+  }
+  target.innerHTML = tenantWorkspaces.map((tenant) => {
+    const selected = selectedTenantId === tenant.id;
+    return '<div class="session-row tenant-workspace-row"><div>' +
+      '<strong>' + escapeHtml(tenant.name) + '</strong>' +
+      '<span class="micro-note">' + (tenant.kind === "gym" ? "GYM WORKSPACE" : "PERSONAL WORKSPACE") +
+      ' · ' + escapeHtml(tenant.role) + ' · ' + escapeHtml(tenant.membership_status) + '</span>' +
+      (tenant.kind === "gym" ? '<span class="micro-note">/' + escapeHtml(tenant.slug) + '</span>' : '') +
+      '</div>' +
+      (selected ? '<span class="tag">SELECTED</span>' :
+        '<button class="text-button" data-tenant-action="select-workspace" data-tenant-id="' + escapeHtml(tenant.id) + '">Manage</button>') +
+      '</div>';
+  }).join("");
+}
+
+async function loadTenantWorkspaces() {
+  const listTarget = document.querySelector("#tenant-workspace-list");
+  if (!listTarget || !hasApi() || !hasAuth()) return;
+  const userId = getCurrentUserId();
+  if (tenantStateUserId !== userId) {
+    tenantStateUserId = userId;
+    tenantWorkspaces = [];
+    selectedTenantId = null;
+    tenantMembers = [];
+    tenantInvitations = [];
+    tenantMembersCursor = null;
+    tenantInvitationsCursor = null;
+    tenantDetailMessage = "";
+    tenantActionMessage = "";
+    tenantDevelopmentToken = null;
+    tenantDevelopmentTokenTenantId = null;
+  }
+  const sequence = ++tenantListSequence;
+  listTarget.innerHTML = '<div class="micro-note">Loading workspaces…</div>';
+  const result = await listTenants();
+  if (sequence !== tenantListSequence || tenantStateUserId !== getCurrentUserId()) return;
+  if (!result.ok || !Array.isArray(result.body?.tenants)) {
+    listTarget.innerHTML = '<div class="micro-note">' + escapeHtml(result.message || "Could not load workspaces.") + '</div>';
+    return;
+  }
+  tenantWorkspaces = result.body.tenants;
+  if (!tenantWorkspaces.some((tenant) => tenant.id === selectedTenantId)) {
+    selectedTenantId = (tenantWorkspaces.find((tenant) => tenant.kind === "gym") || tenantWorkspaces[0] || {}).id || null;
+  }
+  renderTenantWorkspaceList();
+  if (selectedTenantId) await loadTenantWorkspaceDetail(selectedTenantId);
+  else renderTenantWorkspaceDetail();
+}
+
+async function loadTenantWorkspaceDetail(tenantId) {
+  selectedTenantId = tenantId;
+  const tenant = tenantWorkspaces.find((item) => item.id === tenantId);
+  tenantMembers = [];
+  tenantInvitations = [];
+  tenantMembersCursor = null;
+  tenantInvitationsCursor = null;
+  tenantDetailMessage = "";
+  tenantActionMessage = "";
+  tenantDevelopmentToken = null;
+  tenantDevelopmentTokenTenantId = null;
+  renderTenantWorkspaceList();
+  const sequence = ++tenantDetailSequence;
+  if (!tenant) {
+    renderTenantWorkspaceDetail();
+    return;
+  }
+  if (tenant.kind !== "gym" || !["owner", "admin"].includes(tenant.role)) {
+    renderTenantWorkspaceDetail();
+    return;
+  }
+  const results = await Promise.all([
+    listTenantMembers(tenantId, 50),
+    listTenantInvitations(tenantId, 50)
+  ]);
+  if (sequence !== tenantDetailSequence || selectedTenantId !== tenantId) return;
+  const membersResult = results[0];
+  const invitationsResult = results[1];
+  if (membersResult.ok) {
+    tenantMembers = Array.isArray(membersResult.body?.members) ? membersResult.body.members : [];
+    tenantMembersCursor = membersResult.body?.nextCursor || null;
+  } else {
+    tenantDetailMessage = membersResult.message || "Could not load workspace roster.";
+  }
+  if (invitationsResult.ok) {
+    tenantInvitations = Array.isArray(invitationsResult.body?.invitations) ? invitationsResult.body.invitations : [];
+    tenantInvitationsCursor = invitationsResult.body?.nextCursor || null;
+  } else if (!tenantDetailMessage) {
+    tenantDetailMessage = invitationsResult.message || "Could not load workspace invitations.";
+  }
+  renderTenantWorkspaceDetail();
+}
+
+function renderTenantWorkspaceDetail() {
+  const target = document.querySelector("#tenant-workspace-detail");
+  if (!target) return;
+  const tenant = tenantWorkspaces.find((item) => item.id === selectedTenantId);
+  if (!tenant) {
+    target.innerHTML = '<div class="micro-note">Create a gym workspace or join one using an invitation.</div>';
+    return;
+  }
+  if (tenant.kind !== "gym") {
+    target.innerHTML = '<div class="tenant-detail-heading"><div class="eyebrow">PERSONAL WORKSPACE</div>' +
+      '<h4>' + escapeHtml(tenant.name) + '</h4></div>' +
+      '<p class="micro-note">This is your private workspace. Create a gym workspace if you need a team roster and invitations. Personal workout history is not shared automatically.</p>';
+    return;
+  }
+  if (!["owner", "admin"].includes(tenant.role)) {
+    target.innerHTML = '<div class="tenant-detail-heading"><div class="eyebrow">GYM WORKSPACE</div>' +
+      '<h4>' + escapeHtml(tenant.name) + '</h4><span class="tag">' + escapeHtml(tenant.role) + '</span></div>' +
+      '<p class="micro-note">You are a workspace member. Only an owner or admin can view the roster or manage invitations.</p>';
+    return;
+  }
+
+  const roleOptions = tenant.role === "owner"
+    ? '<option value="member">Member</option><option value="coach">Coach</option><option value="admin">Admin</option>'
+    : '<option value="member">Member</option><option value="coach">Coach</option>';
+  const memberRows = tenantMembers.length ? tenantMembers.map((member) =>
+    '<div class="session-row"><div><strong>' + escapeHtml(member.email) + '</strong>' +
+    '<span class="micro-note">' + escapeHtml(member.role) + ' · ' + escapeHtml(member.membership_status) + '</span></div>' +
+    '<span class="tag">' + escapeHtml(member.membership_status).toUpperCase() + '</span></div>'
+  ).join("") : '<div class="micro-note">No members found on this page.</div>';
+  const invitationRows = tenantInvitations.length ? tenantInvitations.map((invite) =>
+    '<div class="session-row"><div><strong>' + escapeHtml(invite.email) + '</strong>' +
+    '<span class="micro-note">' + escapeHtml(invite.role) + ' · expires ' +
+    escapeHtml(new Date(invite.expires_at).toLocaleDateString("en-IN")) + '</span></div>' +
+    '<div class="tenant-row-actions"><span class="tag">' + escapeHtml(invite.status).toUpperCase() + '</span>' +
+    (invite.status === "pending" ? '<button class="text-button" data-tenant-action="revoke-invitation" data-invitation-id="' +
+      escapeHtml(invite.id) + '">Revoke</button>' : '') +
+    '</div></div>'
+  ).join("") : '<div class="micro-note">No invitations yet.</div>';
+
+  target.innerHTML = '<div class="tenant-detail-heading"><div class="eyebrow">WORKSPACE ADMIN</div>' +
+    '<h4>' + escapeHtml(tenant.name) + '</h4><span class="micro-note">' +
+    escapeHtml(tenant.role) + ' access · ' + escapeHtml(tenant.slug) + '</span></div>' +
+    (tenantDetailMessage ? '<div class="micro-note" role="status">' + escapeHtml(tenantDetailMessage) + '</div>' : '') +
+    (tenantActionMessage ? '<div class="tenant-action-message" role="status">' + escapeHtml(tenantActionMessage) + '</div>' : '') +
+    '<div class="tenant-section-head"><strong>Members</strong><span class="micro-note">' + tenantMembers.length + ' loaded</span></div>' +
+    '<div class="tenant-list">' + memberRows + '</div>' +
+    (tenantMembersCursor ? '<button class="text-button" data-tenant-action="more-members">Load more members</button>' : '') +
+    '<div class="tenant-section-head"><strong>Invitations</strong><span class="micro-note">' + tenantInvitations.length + ' loaded</span></div>' +
+    '<div class="tenant-list">' + invitationRows + '</div>' +
+    (tenantInvitationsCursor ? '<button class="text-button" data-tenant-action="more-invitations">Load more invitations</button>' : '') +
+    '<div class="tenant-invite-form"><div class="eyebrow">INVITE SOMEONE</div>' +
+    '<label class="field-label" for="tenant-invite-email">Invitee email</label>' +
+    '<input class="text-input" id="tenant-invite-email" type="email" autocomplete="off" placeholder="person@example.com">' +
+    '<label class="field-label" for="tenant-invite-role">Workspace role</label>' +
+    '<select class="text-input" id="tenant-invite-role">' + roleOptions + '</select>' +
+    '<button class="secondary-button full" data-tenant-action="send-invitation">Send invitation</button>' +
+    (tenantDevelopmentToken && tenantDevelopmentTokenTenantId === tenant.id
+      ? '<label class="field-label" for="tenant-development-token">Development invitation token</label>' +
+        '<input class="text-input" id="tenant-development-token" value="' + escapeHtml(tenantDevelopmentToken) + '" readonly>' +
+        '<button class="secondary-button full" data-tenant-action="copy-development-token">Copy token</button>' +
+        '<p class="micro-note">Development only: paste this token into the invitee\'s Join a Gym section while signed in with the invited email.</p>'
+      : '') +
+    '</div>';
+}
+
+async function loadMoreTenantMembers() {
+  if (!selectedTenantId || !tenantMembersCursor) return;
+  const tenantId = selectedTenantId;
+  const result = await listTenantMembers(tenantId, 50, tenantMembersCursor);
+  if (!result.ok) return announce(result.message || "Could not load more members.");
+  if (selectedTenantId !== tenantId) return;
+  tenantMembers = tenantMembers.concat(result.body?.members || []);
+  tenantMembersCursor = result.body?.nextCursor || null;
+  renderTenantWorkspaceDetail();
+}
+
+async function loadMoreTenantInvitations() {
+  if (!selectedTenantId || !tenantInvitationsCursor) return;
+  const tenantId = selectedTenantId;
+  const result = await listTenantInvitations(tenantId, 50, tenantInvitationsCursor);
+  if (!result.ok) return announce(result.message || "Could not load more invitations.");
+  if (selectedTenantId !== tenantId) return;
+  tenantInvitations = tenantInvitations.concat(result.body?.invitations || []);
+  tenantInvitationsCursor = result.body?.nextCursor || null;
+  renderTenantWorkspaceDetail();
+}
+
+async function handleTenantAction(button) {
+  const action = button.dataset.tenantAction;
+  button.disabled = true;
+  try {
+    if (action === "select-workspace") {
+      await loadTenantWorkspaceDetail(button.dataset.tenantId);
+      return;
+    }
+    if (action === "create-workspace") {
+      const name = document.querySelector("#tenant-create-name")?.value.trim();
+      const slug = document.querySelector("#tenant-create-slug")?.value.trim();
+      if (!name) return announce("Enter a gym or studio name.");
+      const result = await createTenant(name, slug || null);
+      if (!result.ok) return announce(result.message || "Workspace could not be created.");
+      document.querySelector("#tenant-create-name").value = "";
+      document.querySelector("#tenant-create-slug").value = "";
+      selectedTenantId = result.body?.tenant?.id || null;
+      await loadTenantWorkspaces();
+      if (selectedTenantId) await loadTenantWorkspaceDetail(selectedTenantId);
+      announce("Gym workspace created. You are its owner.");
+      return;
+    }
+    if (action === "send-invitation") {
+      const email = document.querySelector("#tenant-invite-email")?.value.trim();
+      const role = document.querySelector("#tenant-invite-role")?.value;
+      if (!selectedTenantId || !email || !role) return announce("Enter an email and choose a workspace role.");
+      const result = await createTenantInvitation(selectedTenantId, email, role);
+      if (!result.ok) {
+        await loadTenantWorkspaceDetail(selectedTenantId);
+        tenantActionMessage = result.message || "Invitation could not be sent.";
+        renderTenantWorkspaceDetail();
+        return announce(tenantActionMessage);
+      }
+      tenantDevelopmentToken = typeof result.body?.developmentToken === "string" ? result.body.developmentToken : null;
+      tenantDevelopmentTokenTenantId = tenantDevelopmentToken ? selectedTenantId : null;
+      await loadTenantWorkspaceDetail(selectedTenantId);
+      tenantActionMessage = tenantDevelopmentToken
+        ? "Invitation saved for " + email + ". Copy the development token below to complete the test flow."
+        : "Invitation email queued for " + email + ".";
+      renderTenantWorkspaceDetail();
+      announce(tenantActionMessage);
+      return;
+    }
+    if (action === "revoke-invitation") {
+      const invitationId = button.dataset.invitationId;
+      if (!selectedTenantId || !invitationId) return;
+      if (!window.confirm("Revoke this invitation? The token will no longer work.")) return;
+      const result = await revokeTenantInvitation(selectedTenantId, invitationId);
+      if (!result.ok) return announce(result.message || "Invitation could not be revoked.");
+      await loadTenantWorkspaceDetail(selectedTenantId);
+      tenantActionMessage = "Invitation revoked.";
+      renderTenantWorkspaceDetail();
+      announce(tenantActionMessage);
+      return;
+    }
+    if (action === "accept-invitation") {
+      const token = document.querySelector("#tenant-accept-token")?.value.trim();
+      if (!token) return announce("Paste an invitation token.");
+      const result = await acceptTenantInvitation(token);
+      if (!result.ok) return announce(result.message || "Invitation could not be accepted.");
+      const acceptedTenantId = result.body?.tenant?.id || null;
+      document.querySelector("#tenant-accept-token").value = "";
+      selectedTenantId = acceptedTenantId;
+      await loadTenantWorkspaces();
+      if (acceptedTenantId) await loadTenantWorkspaceDetail(acceptedTenantId);
+      announce("Invitation accepted. You are now a workspace member.");
+      return;
+    }
+    if (action === "more-members") {
+      await loadMoreTenantMembers();
+      return;
+    }
+    if (action === "more-invitations") {
+      await loadMoreTenantInvitations();
+      return;
+    }
+    if (action === "copy-development-token") {
+      if (!tenantDevelopmentToken) return;
+      try {
+        await navigator.clipboard.writeText(tenantDevelopmentToken);
+      } catch {
+        const input = document.querySelector("#tenant-development-token");
+        input?.select();
+        document.execCommand?.("copy");
+      }
+      announce("Development invitation token copied.");
+    }
+  } catch {
+    announce("Workspace operation failed. Retry and check your connection.");
+  } finally {
+    button.disabled = false;
+  }
+}
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"]/g, (char) => ({
@@ -36,6 +362,7 @@ export function renderAccount(state) {
             ? `<p>This browser uses a short-lived access session with a secure refresh cookie. Completed workouts can sync after local save.</p>
                <div id="auth-session-list" class="session-list"><div class="micro-note">Loading active sessions…</div></div>
                ${renderSyncRecovery(state)}
+               ${renderTenantManager()}
                <div class="auth-actions">
                  <button class="secondary-button" data-account-action="sign-out">Sign out</button>
                  <button class="secondary-button" data-account-action="logout-all">Sign out all devices</button>
@@ -279,5 +606,12 @@ export function wireAccount({ render, retrySync }) {
     }
   }));
 
+  const tenantManager = document.querySelector("#tenant-manager");
+  tenantManager?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-tenant-action]");
+    if (button) void handleTenantAction(button);
+  });
+
   void loadSessions();
+  void loadTenantWorkspaces();
 }

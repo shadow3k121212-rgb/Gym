@@ -55,3 +55,19 @@
 .panel-subsection .field-label:first-of-type {
   margin-top: 0;
 }
+
+.tenant-manager h4{font-size:17px;letter-spacing:-.02em;margin:8px 0}
+.tenant-manager>p{line-height:1.6}
+.tenant-create-form,.tenant-invite-form,.tenant-accept-form{border-top:1px solid var(--border);margin-top:18px;padding-top:18px}
+.tenant-detail-heading{margin:20px 0 8px;padding-top:18px;border-top:1px solid var(--border)}
+.tenant-detail-heading h4{margin:8px 0}
+.tenant-section-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;border-top:1px solid var(--border);padding-top:16px;margin-top:16px}
+.tenant-row-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap}
+.tenant-action-message{font-size:11px;line-height:1.5;padding:10px 0;color:var(--accent)}
+.tenant-manager .text-input{margin-bottom:10px}
+.tenant-manager .field-label{margin-top:14px}
+.tenant-manager button{white-space:nowrap}
+.tenant-manager .session-row{align-items:flex-start}
+.tenant-manager .session-row>div:first-child{min-width:0;overflow-wrap:anywhere}
+.tenant-manager .tag{flex-shrink:0}
+@media (max-width:760px){.tenant-row-actions{align-items:flex-end;flex-direction:column;gap:6px}.tenant-manager .session-row{gap:8px}.tenant-manager .text-input{font-size:16px}}
