@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { enqueueSyncItem, getDueSyncItems, getMaxAutomaticRetryAttempts, getNextSyncRetryAt, getSyncRetryDelayMs, normalizeSyncQueue, recordSyncFailure, removeSyncItem, retrySyncItem } from "../src/sync-queue.js";
+import { enqueueSyncItem, getDueSyncItems, getMaxAutomaticRetryAttempts, getNextSyncRetryAt, getSyncRetryDelayMs, normalizeSyncQueue, recordSyncFailure, removeSyncItem, retrySyncItem, summarizeSyncQueue } from "../src/sync-queue.js";
 
 const session = (id, name = id) => ({ id, name });
 
@@ -132,4 +132,47 @@ test("exhausted transient retries become blocked without deleting local work", (
   assert.equal(current[0].nextAttemptAt, null);
   assert.equal(current[0].lastError, "retry-exhausted:service-unavailable");
   assert.equal(current[0].lastAttemptAt, "1970-01-01T00:00:00.000Z");
+});
+
+test("summarizes recovery state by account and flags stale records without dropping work", () => {
+  const userId = "123e4567-e89b-12d3-a456-426614174000";
+  const otherUserId = "123e4567-e89b-12d3-a456-426614174001";
+  const nowMs = Date.parse("2026-10-09T12:00:00.000Z");
+  const item = (id, owner, completedAt, options = {}) => ({
+    userId:owner,
+    session:{
+      id,
+      startedAt:completedAt,
+      completedAt,
+      name:id
+    },
+    attempts:options.attempts ?? 0,
+    nextAttemptAt:options.nextAttemptAt ?? null,
+    lastAttemptAt:options.lastAttemptAt ?? null,
+    lastError:options.lastError ?? null,
+    blocked:options.blocked ?? false
+  });
+  const queue = [
+    item("old-scheduled", userId, "2026-10-07T10:00:00.000Z", {
+      attempts:2,
+      nextAttemptAt:"2026-10-09T12:05:00.000Z"
+    }),
+    item("fresh-due", userId, "2026-10-09T10:00:00.000Z"),
+    item("old-blocked", userId, "2026-10-07T09:00:00.000Z", { blocked:true }),
+    item("other-tenant", otherUserId, "2026-10-01T00:00:00.000Z"),
+    item("legacy-unowned", null, "2026-10-01T00:00:00.000Z")
+  ];
+
+  assert.deepEqual(summarizeSyncQueue(queue, { userId, nowMs }), {
+    ownedCount:3,
+    unownedCount:1,
+    blockedCount:1,
+    dueCount:1,
+    scheduledCount:1,
+    staleCount:2,
+    oldestPendingAt:"2026-10-07T09:00:00.000Z"
+  });
+  assert.equal(queue.length, 5);
+  assert.equal(summarizeSyncQueue(queue, { userId:otherUserId, nowMs }).ownedCount, 1);
+  assert.equal(summarizeSyncQueue(queue, { userId:null, nowMs }).ownedCount, 0);
 });
