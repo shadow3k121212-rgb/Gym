@@ -96,6 +96,282 @@ export class PostgresRepository {
     }
   }
 
+  async requireTenantManager(userId, tenantId, db = this.pool, lock = false) {
+    const result = await db.query(
+      `select t.id,t.name,t.slug,t.kind,t.status as tenant_status,tm.role
+       from tenants t
+       join tenant_memberships tm on tm.tenant_id=t.id
+       where t.id=$2 and tm.user_id=$1 and tm.status='active' and t.status='active'
+       ${lock ? "for update of t, tm" : ""}`,
+      [userId,tenantId]
+    );
+    if (!result.rowCount) {
+      const error = new Error("Workspace not found.");
+      error.code = "NOT_FOUND";
+      throw error;
+    }
+    if (!["owner","admin"].includes(result.rows[0].role)) {
+      const error = new Error("Owner or admin permission is required for this workspace action.");
+      error.code = "FORBIDDEN";
+      throw error;
+    }
+    return result.rows[0];
+  }
+
+  async listTenantMembers(actorUserId, tenantId, { limit = 20, before = null } = {}) {
+    await this.requireTenantManager(actorUserId,tenantId);
+    const params = [tenantId];
+    const conditions = ["tm.tenant_id=$1"];
+    if (before) {
+      params.push(before.startedAt,before.id);
+      conditions.push("(tm.joined_at,tm.user_id) < ($2::timestamptz,$3::uuid)");
+    }
+    const limitIndex = params.length + 1;
+    params.push(limit + 1);
+    const result = await this.pool.query(
+      `select tm.tenant_id,tm.user_id,u.email,tm.role,tm.status as membership_status,tm.joined_at
+       from tenant_memberships tm join users u on u.id=tm.user_id
+       where ${conditions.join(" and ")}
+       order by tm.joined_at desc,tm.user_id desc
+       limit ${limitIndex}`,
+      params
+    );
+    const hasMore = result.rows.length > limit;
+    const members = result.rows.slice(0,limit);
+    const last = members[members.length-1];
+    return {
+      members,
+      nextCursor:hasMore && last
+        ? encodeSessionCursor({startedAt:last.joined_at,id:last.user_id})
+        : null
+    };
+  }
+
+  async listTenantInvitations(actorUserId, tenantId, { limit = 20, before = null } = {}) {
+    await this.requireTenantManager(actorUserId,tenantId);
+    const params = [tenantId];
+    const conditions = ["ti.tenant_id=$1"];
+    if (before) {
+      params.push(before.startedAt,before.id);
+      conditions.push("(ti.created_at,ti.id) < ($2::timestamptz,$3::uuid)");
+    }
+    const limitIndex = params.length + 1;
+    params.push(limit + 1);
+    const result = await this.pool.query(
+      `select ti.id,ti.tenant_id,ti.email,ti.role,ti.invited_by_user_id,ti.expires_at,
+        ti.accepted_at,ti.revoked_at,ti.created_at,
+        case
+          when ti.accepted_at is not null then 'accepted'
+          when ti.revoked_at is not null then 'revoked'
+          when ti.expires_at <= now() then 'expired'
+          else 'pending'
+        end as status
+       from tenant_invitations ti
+       where ${conditions.join(" and ")}
+       order by ti.created_at desc,ti.id desc
+       limit ${limitIndex}`,
+      params
+    );
+    const hasMore = result.rows.length > limit;
+    const invitations = result.rows.slice(0,limit);
+    const last = invitations[invitations.length-1];
+    return {
+      invitations,
+      nextCursor:hasMore && last
+        ? encodeSessionCursor({startedAt:last.created_at,id:last.id})
+        : null
+    };
+  }
+
+  async createTenantInvitation({ actorUserId, tenantId, id, email, role, tokenHash, expiresAt }) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("begin");
+      const actor = await this.requireTenantManager(actorUserId,tenantId,client,true);
+      if (actor.role === "admin" && role === "admin") {
+        const error = new Error("Admins may invite coaches and members, but only an owner may invite another admin.");
+        error.code = "TENANT_ROLE_FORBIDDEN";
+        throw error;
+      }
+
+      const existingMember = await client.query(
+        `select tm.status from tenant_memberships tm
+         join users u on u.id=tm.user_id
+         where tm.tenant_id=$1 and lower(u.email)=lower($2)
+         limit 1 for update of tm`,
+        [tenantId,email]
+      );
+      if (existingMember.rowCount && existingMember.rows[0].status === "active") {
+        const error = new Error("This person is already an active workspace member.");
+        error.code = "TENANT_MEMBERSHIP_EXISTS";
+        throw error;
+      }
+      if (existingMember.rowCount && existingMember.rows[0].status === "suspended") {
+        const error = new Error("This person's workspace membership is suspended.");
+        error.code = "TENANT_MEMBERSHIP_SUSPENDED";
+        throw error;
+      }
+
+      await client.query(
+        `update tenant_invitations set revoked_at=now()
+         where tenant_id=$1 and lower(email)=lower($2)
+           and accepted_at is null and revoked_at is null`,
+        [tenantId,email]
+      );
+      const result = await client.query(
+        `insert into tenant_invitations
+          (id,tenant_id,email,role,token_hash,invited_by_user_id,expires_at)
+         values ($1,$2,$3,$4,$5,$6,$7)
+         returning id,tenant_id,email,role,invited_by_user_id,expires_at,accepted_at,revoked_at,created_at`,
+        [id,tenantId,email,role,tokenHash,actorUserId,expiresAt]
+      );
+      await client.query("commit");
+      return {...result.rows[0],status:"pending",tenant:{id:actor.id,name:actor.name,slug:actor.slug}};
+    } catch (error) {
+      await client.query("rollback");
+      if (error?.code==="23505" && error?.constraint==="tenant_invitations_one_open_per_email_idx") {
+        const conflict = new Error("An active invitation already exists for this email.");
+        conflict.code="TENANT_INVITATION_CONFLICT";
+        throw conflict;
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async revokeTenantInvitation(actorUserId, tenantId, invitationId) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("begin");
+      const actor = await this.requireTenantManager(actorUserId,tenantId,client,true);
+      const result = await client.query(
+        `select id,tenant_id,email,role,invited_by_user_id,expires_at,accepted_at,revoked_at,created_at
+         from tenant_invitations where id=$1 and tenant_id=$2 for update`,
+        [invitationId,tenantId]
+      );
+      if (!result.rowCount) {
+        const error = new Error("Invitation not found.");
+        error.code="NOT_FOUND";
+        throw error;
+      }
+      const invite = result.rows[0];
+      if (invite.accepted_at) {
+        const error = new Error("An accepted invitation cannot be revoked.");
+        error.code="TENANT_INVITATION_FINAL";
+        throw error;
+      }
+      if (actor.role === "admin" && invite.role === "admin") {
+        const error = new Error("Only an owner may revoke an admin invitation.");
+        error.code="TENANT_ROLE_FORBIDDEN";
+        throw error;
+      }
+      if (!invite.revoked_at) {
+        await client.query("update tenant_invitations set revoked_at=now() where id=$1", [invitationId]);
+        invite.revoked_at = new Date();
+      }
+      await client.query("commit");
+      return {...invite,status:"revoked"};
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async acceptTenantInvitation(userId, tokenHash) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("begin");
+      const found = await client.query(
+        `select ti.id,ti.tenant_id,ti.email,ti.role,ti.invited_by_user_id,
+          ti.expires_at,ti.accepted_at,ti.revoked_at,t.name,t.slug,t.kind,t.status as tenant_status,t.created_at
+         from tenant_invitations ti join tenants t on t.id=ti.tenant_id
+         where ti.token_hash=$1 for update of ti,t`,
+        [tokenHash]
+      );
+      if (!found.rowCount) {
+        const error = new Error("Invitation is invalid, expired, or already used.");
+        error.code="INVALID_INVITATION";
+        throw error;
+      }
+      const invite = found.rows[0];
+      if (invite.accepted_at || invite.revoked_at || new Date(invite.expires_at).getTime() <= Date.now()) {
+        const error = new Error("Invitation is invalid, expired, or already used.");
+        error.code="INVALID_INVITATION";
+        throw error;
+      }
+      if (invite.tenant_status !== "active") {
+        const error = new Error("Workspace is not active.");
+        error.code="NOT_FOUND";
+        throw error;
+      }
+      const userResult = await client.query(
+        "select id,email,status from users where id=$1 for update",
+        [userId]
+      );
+      if (!userResult.rowCount || userResult.rows[0].status !== "active") {
+        const error = new Error("Account is not active.");
+        error.code="NOT_FOUND";
+        throw error;
+      }
+      if (userResult.rows[0].email.toLowerCase() !== invite.email.toLowerCase()) {
+        const error = new Error("This invitation was sent to a different email address.");
+        error.code="INVITATION_EMAIL_MISMATCH";
+        throw error;
+      }
+
+      const existing = await client.query(
+        "select status from tenant_memberships where tenant_id=$1 and user_id=$2 for update",
+        [invite.tenant_id,userId]
+      );
+      if (existing.rowCount && existing.rows[0].status === "active") {
+        const error = new Error("You are already a workspace member.");
+        error.code="TENANT_MEMBERSHIP_EXISTS";
+        throw error;
+      }
+      if (existing.rowCount && existing.rows[0].status === "suspended") {
+        const error = new Error("Your workspace membership is suspended.");
+        error.code="TENANT_MEMBERSHIP_SUSPENDED";
+        throw error;
+      }
+      if (existing.rowCount) {
+        await client.query(
+          `update tenant_memberships set role=$3,status='active',invited_by_user_id=$4,
+            joined_at=now(),updated_at=now() where tenant_id=$1 and user_id=$2`,
+          [invite.tenant_id,userId,invite.role,invite.invited_by_user_id]
+        );
+      } else {
+        await client.query(
+          `insert into tenant_memberships(tenant_id,user_id,role,status,invited_by_user_id)
+           values ($1,$2,$3,'active',$4)`,
+          [invite.tenant_id,userId,invite.role,invite.invited_by_user_id]
+        );
+      }
+      const accepted = await client.query(
+        "update tenant_invitations set accepted_at=now() where id=$1 and accepted_at is null and revoked_at is null returning id",
+        [invite.id]
+      );
+      if (!accepted.rowCount) {
+        const error = new Error("Invitation is invalid, expired, or already used.");
+        error.code="INVALID_INVITATION";
+        throw error;
+      }
+      await client.query("commit");
+      return {
+        id:invite.tenant_id,name:invite.name,slug:invite.slug,kind:invite.kind,
+        tenant_status:invite.tenant_status,role:invite.role,
+        membership_status:"active",created_at:invite.created_at
+      };
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async createPasswordResetToken({ id, userId, tokenHash, expiresAt }) {
     const client = await this.pool.connect();
     try {

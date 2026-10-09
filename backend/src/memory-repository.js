@@ -9,6 +9,8 @@ export class MemoryRepository {
     this.usersByEmail = new Map();
     this.tenants = new Map();
     this.tenantMemberships = new Map();
+    this.tenantInvitations = new Map();
+    this.tenantInvitationsByHash = new Map();
     this.sessions = new Map();
     this.idempotency = new Map();
     this.events = new Map();
@@ -111,6 +113,144 @@ export class MemoryRepository {
     };
   }
 
+  async requireTenantManager(userId, tenantId) {
+    const tenant=this.tenants.get(tenantId);
+    const membership=this.tenantMemberships.get(tenantId+":"+userId);
+    if (!tenant || tenant.tenant_status!=="active" || !membership || membership.status!=="active") {
+      const error=new Error("Workspace not found.");error.code="NOT_FOUND";throw error;
+    }
+    if (!["owner","admin"].includes(membership.role)) {
+      const error=new Error("Owner or admin permission is required for this workspace action.");error.code="FORBIDDEN";throw error;
+    }
+    return {...tenant,role:membership.role};
+  }
+
+  async listTenantMembers(actorUserId,tenantId,{limit=20,before=null}={}) {
+    await this.requireTenantManager(actorUserId,tenantId);
+    let rows=[...this.tenantMemberships.values()]
+      .filter((m)=>m.tenant_id===tenantId)
+      .map((m)=>{
+        const person=this.users.get(m.user_id);
+        return person ? {
+          tenant_id:m.tenant_id,user_id:m.user_id,email:person.email,role:m.role,
+          membership_status:m.status,joined_at:m.joined_at
+        } : null;
+      }).filter(Boolean);
+    if(before) rows=rows.filter((m)=>m.joined_at<before.startedAt || (m.joined_at===before.startedAt && m.user_id<before.id));
+    rows.sort((a,b)=>b.joined_at.localeCompare(a.joined_at)||b.user_id.localeCompare(a.user_id));
+    const hasMore=rows.length>limit;
+    const members=rows.slice(0,limit);
+    const last=members[members.length-1];
+    return {members,nextCursor:hasMore&&last?encodeSessionCursor({startedAt:last.joined_at,id:last.user_id}):null};
+  }
+
+  async listTenantInvitations(actorUserId,tenantId,{limit=20,before=null}={}) {
+    await this.requireTenantManager(actorUserId,tenantId);
+    let rows=[...this.tenantInvitations.values()].filter((i)=>i.tenant_id===tenantId).map((i)=>({
+      id:i.id,tenant_id:i.tenant_id,email:i.email,role:i.role,invited_by_user_id:i.invited_by_user_id,
+      expires_at:i.expires_at,accepted_at:i.accepted_at,revoked_at:i.revoked_at,created_at:i.created_at,
+      status:i.accepted_at?"accepted":i.revoked_at?"revoked":Date.parse(i.expires_at)<=Date.now()?"expired":"pending"
+    }));
+    if(before) rows=rows.filter((i)=>i.created_at<before.startedAt || (i.created_at===before.startedAt && i.id<before.id));
+    rows.sort((a,b)=>b.created_at.localeCompare(a.created_at)||b.id.localeCompare(a.id));
+    const hasMore=rows.length>limit;
+    const invitations=rows.slice(0,limit);
+    const last=invitations[invitations.length-1];
+    return {invitations,nextCursor:hasMore&&last?encodeSessionCursor({startedAt:last.created_at,id:last.id}):null};
+  }
+
+  async createTenantInvitation({actorUserId,tenantId,id,email,role,tokenHash,expiresAt}) {
+    const actor=await this.requireTenantManager(actorUserId,tenantId);
+    if(actor.role==="admin"&&role==="admin"){
+      const error=new Error("Admins may invite coaches and members, but only an owner may invite another admin.");
+      error.code="TENANT_ROLE_FORBIDDEN";throw error;
+    }
+    const normalizedEmail=String(email).toLowerCase();
+    const existingMember=[...this.tenantMemberships.values()].map((m)=>({m,u:this.users.get(m.user_id)}))
+      .find((entry)=>entry.m.tenant_id===tenantId&&entry.u?.email.toLowerCase()===normalizedEmail);
+    if(existingMember?.m.status==="active"){
+      const error=new Error("This person is already an active workspace member.");
+      error.code="TENANT_MEMBERSHIP_EXISTS";throw error;
+    }
+    if(existingMember?.m.status==="suspended"){
+      const error=new Error("This person's workspace membership is suspended.");
+      error.code="TENANT_MEMBERSHIP_SUSPENDED";throw error;
+    }
+    const now=new Date().toISOString();
+    for(const invite of this.tenantInvitations.values()){
+      if(invite.tenant_id===tenantId&&invite.email.toLowerCase()===normalizedEmail&&!invite.accepted_at&&!invite.revoked_at){
+        invite.revoked_at=now;
+      }
+    }
+    const tenantInvite={
+      id,tenant_id:tenantId,email:normalizedEmail,role,token_hash:tokenHash,
+      invited_by_user_id:actorUserId,
+      expires_at:expiresAt instanceof Date?expiresAt.toISOString():new Date(expiresAt).toISOString(),
+      accepted_at:null,revoked_at:null,created_at:now
+    };
+    this.tenantInvitations.set(id,tenantInvite);
+    this.tenantInvitationsByHash.set(tokenHash,id);
+    return {
+      id,tenant_id:tenantId,email:normalizedEmail,role,invited_by_user_id:actorUserId,
+      expires_at:tenantInvite.expires_at,accepted_at:null,revoked_at:null,created_at:now,
+      status:"pending",tenant:{id:actor.id,name:actor.name,slug:actor.slug}
+    };
+  }
+
+  async revokeTenantInvitation(actorUserId,tenantId,invitationId) {
+    const actor=await this.requireTenantManager(actorUserId,tenantId);
+    const invite=this.tenantInvitations.get(invitationId);
+    if(!invite||invite.tenant_id!==tenantId){const error=new Error("Invitation not found.");error.code="NOT_FOUND";throw error;}
+    if(invite.accepted_at){const error=new Error("An accepted invitation cannot be revoked.");error.code="TENANT_INVITATION_FINAL";throw error;}
+    if(actor.role==="admin"&&invite.role==="admin"){
+      const error=new Error("Only an owner may revoke an admin invitation.");error.code="TENANT_ROLE_FORBIDDEN";throw error;
+    }
+    if(!invite.revoked_at) invite.revoked_at=new Date().toISOString();
+    return {
+      id:invite.id,tenant_id:invite.tenant_id,email:invite.email,role:invite.role,
+      invited_by_user_id:invite.invited_by_user_id,expires_at:invite.expires_at,
+      accepted_at:invite.accepted_at,revoked_at:invite.revoked_at,created_at:invite.created_at,status:"revoked"
+    };
+  }
+
+  async acceptTenantInvitation(userId,tokenHash) {
+    const inviteId=this.tenantInvitationsByHash.get(tokenHash);
+    const invite=inviteId?this.tenantInvitations.get(inviteId):null;
+    if(!invite||invite.accepted_at||invite.revoked_at||Date.parse(invite.expires_at)<=Date.now()){
+      const error=new Error("Invitation is invalid, expired, or already used.");error.code="INVALID_INVITATION";throw error;
+    }
+    const user=this.users.get(userId);
+    const tenant=this.tenants.get(invite.tenant_id);
+    if(!user||user.status!=="active"||!tenant||tenant.tenant_status!=="active"){
+      const error=new Error("Account or workspace is not active.");error.code="NOT_FOUND";throw error;
+    }
+    if(user.email.toLowerCase()!==invite.email.toLowerCase()){
+      const error=new Error("This invitation was sent to a different email address.");error.code="INVITATION_EMAIL_MISMATCH";throw error;
+    }
+    const key=invite.tenant_id+":"+userId;
+    const existing=this.tenantMemberships.get(key);
+    if(existing?.status==="active"){
+      const error=new Error("You are already a workspace member.");error.code="TENANT_MEMBERSHIP_EXISTS";throw error;
+    }
+    if(existing?.status==="suspended"){
+      const error=new Error("Your workspace membership is suspended.");error.code="TENANT_MEMBERSHIP_SUSPENDED";throw error;
+    }
+    const now=new Date().toISOString();
+    if(existing){
+      existing.role=invite.role;existing.status="active";existing.invited_by_user_id=invite.invited_by_user_id;existing.joined_at=now;
+    }else{
+      this.tenantMemberships.set(key,{
+        tenant_id:invite.tenant_id,user_id:userId,role:invite.role,status:"active",
+        invited_by_user_id:invite.invited_by_user_id,joined_at:now
+      });
+    }
+    invite.accepted_at=now;
+    return {
+      id:tenant.id,name:tenant.name,slug:tenant.slug,kind:tenant.kind,
+      tenant_status:tenant.tenant_status,role:invite.role,membership_status:"active",created_at:tenant.created_at
+    };
+  }
+
   async createPasswordResetToken({ id, userId, tokenHash, expiresAt }) {
     for (const token of this.passwordResetTokens.values()) {
       if (token.user_id === userId && !token.used_at) token.used_at = new Date().toISOString();
@@ -198,6 +338,9 @@ export class MemoryRepository {
     this.users.delete(userId);
     for (const [key,membership] of this.tenantMemberships) {
       if (membership.user_id === userId || membership.tenant_id === userId) this.tenantMemberships.delete(key);
+    }
+    for (const invite of this.tenantInvitations.values()) {
+      if (invite.invited_by_user_id===userId) invite.invited_by_user_id=null;
     }
     for (const [tenantId,tenant] of this.tenants) {
       if (tenant.kind === "personal" && tenant.id === userId) this.tenants.delete(tenantId);

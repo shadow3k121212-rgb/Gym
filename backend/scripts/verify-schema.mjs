@@ -47,6 +47,12 @@ try {
   const indexes = await client.query("select indexname from pg_indexes where schemaname='public' and indexname in ($1,$2)", ["workout_sessions_user_idempotency_idx", "movement_events_session_idempotency_idx"]);
   if (indexes.rowCount !== 2) throw new Error("Required idempotency indexes are missing.");
 
+  const invitationIndex = await client.query(
+    "select 1 from pg_indexes where schemaname='public' and indexname=$1",
+    ["tenant_invitations_one_open_per_email_idx"]
+  );
+  if (invitationIndex.rowCount !== 1) throw new Error("Active invitation uniqueness index is missing.");
+
   const ownerGuard = await client.query(
     "select 1 from pg_trigger where tgname=$1 and not tgisinternal",
     ["tenant_memberships_keep_active_owner"]
@@ -55,7 +61,7 @@ try {
 
   const migrations = await client.query("select version from schema_migrations order by version");
   const versions = migrations.rows.map((row) => row.version);
-  const expected = ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011"];
+  const expected = ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011", "012"];
   if (JSON.stringify(versions) !== JSON.stringify(expected)) throw new Error("Unexpected migration ledger: " + versions.join(","));
 
   console.log("Database schema verification passed.");

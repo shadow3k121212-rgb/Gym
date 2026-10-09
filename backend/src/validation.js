@@ -57,6 +57,13 @@ export function slugifyTenantName(value) {
   return slug.length >= 2 ? slug : "gym-workspace";
 }
 
+export function validateTenantInvitationRole(value) {
+  if (!["admin", "coach", "member"].includes(value)) {
+    throw new ValidationError("Invitation role must be admin, coach, or member.");
+  }
+  return value;
+}
+
 function isoDate(value, label) {
   if (typeof value !== "string") throw new ValidationError(label + " must be an ISO date-time.");
   const timestamp = Date.parse(value);
