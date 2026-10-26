@@ -145,6 +145,41 @@ export class MemoryRepository {
   }
 
 
+
+  async transferTenantOwnership(actorUserId,tenantId,targetUserId) {
+    const actor = await this.requireTenantManager(actorUserId,tenantId);
+    if (actor.role !== "owner") {
+      const error = new Error("Only an active workspace owner can transfer ownership.");
+      error.code = "TENANT_OWNER_ONLY";
+      throw error;
+    }
+    if (actorUserId === targetUserId) {
+      const error = new Error("Choose another active workspace member to receive ownership.");
+      error.code = "TENANT_TRANSFER_TARGET_INVALID";
+      throw error;
+    }
+    const target = this.tenantMemberships.get(tenantId + ":" + targetUserId);
+    const person = this.users.get(targetUserId);
+    if (!target || !person || target.status !== "active") {
+      const error = new Error("Ownership can only be transferred to an active member of this workspace.");
+      error.code = "TENANT_TRANSFER_TARGET_INVALID";
+      throw error;
+    }
+    target.role = "owner";
+    target.updated_at = new Date().toISOString();
+    const ownMembership = this.tenantMemberships.get(tenantId + ":" + actorUserId);
+    ownMembership.role = "admin";
+    ownMembership.updated_at = new Date().toISOString();
+    return {
+      tenant_id:tenantId,
+      previous_owner_user_id:actorUserId,
+      previous_owner_role:"admin",
+      new_owner_user_id:targetUserId,
+      new_owner_email:person.email,
+      role:"owner"
+    };
+  }
+
   async updateTenantMembership(actorUserId,tenantId,targetUserId,changes) {
     const actor = await this.requireTenantManager(actorUserId,tenantId);
     const member = this.tenantMemberships.get(tenantId + ":" + targetUserId);
