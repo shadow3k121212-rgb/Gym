@@ -436,6 +436,19 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
         }
       }
 
+
+      const ownershipTransfer = path.match(/^\/v1\/tenants\/([^/]+)\/ownership-transfer$/);
+      if (ownershipTransfer && req.method === "POST") {
+        const rawTenantId = ownershipTransfer[1];
+        if (!UUID_PATTERN.test(rawTenantId)) return okError(res, 400, "Invalid workspace id.", id);
+        const body = await readJson(req);
+        if (typeof body.targetUserId !== "string" || !UUID_PATTERN.test(body.targetUserId)) {
+          return okError(res, 400, "A valid targetUserId is required.", id);
+        }
+        const transfer = await repo.transferTenantOwnership(user.id, rawTenantId.toLowerCase(), body.targetUserId.toLowerCase());
+        return send(res, 200, { transfer }, { ...cors, "x-request-id":id });
+      }
+
       if (path === "/v1/tenant-invitations/accept" && req.method === "POST") {
         const body = await readJson(req);
         if (typeof body.token !== "string" || body.token.length < 40 || body.token.length > 128) {
@@ -520,6 +533,8 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
       if (error?.code === "DUPLICATE_EMAIL") return okError(res, 409, "Email already registered.", id);
       if (error?.code === "TENANT_SLUG_CONFLICT") return okError(res, 409, "Workspace slug already exists. Choose a different slug.", id);
       if (error?.code === "TENANT_OWNER_REQUIRED") return okError(res, 409, error.message, id);
+       if (error?.code === "TENANT_OWNER_ONLY") return okError(res, 403, error.message, id);
+       if (error?.code === "TENANT_TRANSFER_TARGET_INVALID") return okError(res, 409, error.message, id);
       if (["FORBIDDEN","TENANT_ROLE_FORBIDDEN","TENANT_SELF_MANAGEMENT","INVITATION_EMAIL_MISMATCH","TENANT_MEMBERSHIP_SUSPENDED"].includes(error?.code)) return okError(res, 403, error.message, id);
       if (["TENANT_MEMBERSHIP_EXISTS","TENANT_INVITATION_CONFLICT","TENANT_INVITATION_FINAL","TENANT_OWNER_TRANSFER_REQUIRED","TENANT_MEMBERSHIP_FINAL"].includes(error?.code)) return okError(res, 409, error.message, id);
       if (error?.code === "INVALID_INVITATION") return okError(res, 400, error.message, id);
