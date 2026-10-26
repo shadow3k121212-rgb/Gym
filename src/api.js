@@ -243,6 +243,21 @@ export function listTenantMembers(tenantId, limit = 20, cursor = null) {
   return request(tenantPagePath("/v1/tenants/" + encodeURIComponent(tenantId) + "/members",limit,cursor));
 }
 
+
+export function updateTenantMember(tenantId, userId, changes) {
+  if (!apiBaseUrl || !hasAuth() || typeof tenantId !== "string" || !tenantId || typeof userId !== "string" || !userId) return tenantRequestUnavailable();
+  if (!changes || typeof changes !== "object" || Array.isArray(changes)) return Promise.resolve({ok:false,message:"Invalid membership update."});
+  return request("/v1/tenants/" + encodeURIComponent(tenantId) + "/members/" + encodeURIComponent(userId), {
+    method:"PATCH",
+    body:JSON.stringify(changes)
+  });
+}
+
+export function removeTenantMember(tenantId, userId) {
+  if (!apiBaseUrl || !hasAuth() || typeof tenantId !== "string" || !tenantId || typeof userId !== "string" || !userId) return tenantRequestUnavailable();
+  return request("/v1/tenants/" + encodeURIComponent(tenantId) + "/members/" + encodeURIComponent(userId), {method:"DELETE"});
+}
+
 export function listTenantInvitations(tenantId, limit = 20, cursor = null) {
   if (!apiBaseUrl || !hasAuth() || typeof tenantId !== "string" || !tenantId) return tenantRequestUnavailable();
   return request(tenantPagePath("/v1/tenants/" + encodeURIComponent(tenantId) + "/invitations",limit,cursor));
