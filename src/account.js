@@ -362,8 +362,9 @@ async function handleTenantAction(button) {
     if (action === "transfer-ownership") {
       const memberId = button.dataset.memberId;
       const member = tenantMembers.find((item) => item.user_id === memberId);
-      if (!selectedTenantId || !memberId || !member || tenant.role !== "owner") return;
-      if (!window.confirm("Transfer ownership of " + tenant.name + " to " + member.email + "? Your role will become admin. This action changes who can manage ownership and cannot be undone by the former owner.")) return;
+      const selectedTenant = tenantWorkspaces.find((item) => item.id === selectedTenantId);
+      if (!selectedTenantId || !memberId || !member || !selectedTenant || selectedTenant.role !== "owner") return;
+      if (!window.confirm("Transfer ownership of " + selectedTenant.name + " to " + member.email + "? Your role will become admin. This action changes who can manage ownership and cannot be undone by the former owner.")) return;
       const tenantId = selectedTenantId;
       const result = await transferTenantOwnership(tenantId, memberId);
       if (!result.ok) return announce(result.message || "Ownership transfer failed.");
