@@ -64,6 +64,23 @@ export function validateTenantInvitationRole(value) {
   return value;
 }
 
+
+export function validateTenantMembershipUpdate(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new ValidationError("Membership update body is required.");
+  const keys = Object.keys(input);
+  if (keys.length === 0 || keys.some((key) => !["role", "status"].includes(key))) throw new ValidationError("Membership updates may contain only role and/or status.");
+  const update = {};
+  if (Object.hasOwn(input, "role")) {
+    if (!["admin", "coach", "member"].includes(input.role)) throw new ValidationError("Role must be admin, coach, or member. Ownership requires a dedicated transfer flow.");
+    update.role = input.role;
+  }
+  if (Object.hasOwn(input, "status")) {
+    if (!["active", "suspended"].includes(input.status)) throw new ValidationError("Membership status must be active or suspended. Use the remove action to offboard a member.");
+    update.status = input.status;
+  }
+  return update;
+}
+
 function isoDate(value, label) {
   if (typeof value !== "string") throw new ValidationError(label + " must be an ISO date-time.");
   const timestamp = Date.parse(value);
