@@ -144,6 +144,26 @@ export class MemoryRepository {
     return {members,nextCursor:hasMore&&last?encodeSessionCursor({startedAt:last.joined_at,id:last.user_id}):null};
   }
 
+
+  async updateTenantMembership(actorUserId,tenantId,targetUserId,changes) {
+    const actor = await this.requireTenantManager(actorUserId,tenantId);
+    const member = this.tenantMemberships.get(tenantId + ":" + targetUserId);
+    const person = this.users.get(targetUserId);
+    if (!member || !person) { const error = new Error("Workspace member not found."); error.code = "NOT_FOUND"; throw error; }
+    const view = () => ({tenant_id:member.tenant_id,user_id:member.user_id,email:person.email,role:member.role,membership_status:member.status,joined_at:member.joined_at});
+    if (member.role === "owner") { const error = new Error("Workspace owners can only be changed through a dedicated ownership-transfer flow."); error.code = "TENANT_OWNER_TRANSFER_REQUIRED"; throw error; }
+    if (actorUserId === targetUserId) { const error = new Error("You cannot change or remove your own workspace membership through this endpoint."); error.code = "TENANT_SELF_MANAGEMENT"; throw error; }
+    if (actor.role === "admin" && (member.role === "admin" || changes.role === "admin")) { const error = new Error("Only an owner may manage admin roles or memberships."); error.code = "TENANT_ROLE_FORBIDDEN"; throw error; }
+    if (member.status === "left") {
+      if (changes.status === "left" && changes.role === undefined) return view();
+      const error = new Error("An offboarded member must accept a new invitation before rejoining."); error.code = "TENANT_MEMBERSHIP_FINAL"; throw error;
+    }
+    if (changes.role !== undefined) member.role = changes.role;
+    if (changes.status !== undefined) member.status = changes.status;
+    member.updated_at = new Date().toISOString();
+    return view();
+  }
+
   async listTenantInvitations(actorUserId,tenantId,{limit=20,before=null}={}) {
     await this.requireTenantManager(actorUserId,tenantId);
     let rows=[...this.tenantInvitations.values()].filter((i)=>i.tenant_id===tenantId).map((i)=>({
