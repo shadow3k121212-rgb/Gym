@@ -248,4 +248,8 @@ Phase 5 status: IN PROGRESS; do not treat GYM as production-ready multi-tenant u
 - Added regression coverage for lifecycle behavior, role hierarchy, workspace isolation, owner protection, idempotent offboarding, and invalid inputs.
 - Static integrity gate now includes tenant migrations 010–012.
 
-A fresh full CI result is required before calling this slice complete.
+Verification evidence:
+- CI run #523 passed on the membership-lifecycle implementation head `c8c1d30d420e9edb7069a2219d1f525df7415041`; unit/API tests, PostgreSQL migrations/schema verification, HTTP smoke, dependency audit, static checks, production build and output verification all passed. Run: https://github.com/shadow3k121212-rgb/Gym/actions/runs/40347594458.
+- The API, in-memory repository parity, OpenAPI contract, settings controls, and regression tests were present on the tested head.
+
+Membership lifecycle slice status: COMPLETE for the implemented scope. Phase 5 overall remains IN PROGRESS because ownership transfer, explicit coach-to-athlete visibility, tenant-scoped training resources, billing, audit history, and production RLS/operations still remain.
