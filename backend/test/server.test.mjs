@@ -1189,3 +1189,51 @@ test("replacing an invitation invalidates the older token; owners can revoke pen
   });
   assert.equal(acceptRevoked.status,400);
 });
+
+
+test("tenant membership administration enforces status, role, isolation, and offboarding rules", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const register = (email) => request(testServer.base, "/v1/auth/register", {
+    method:"POST",body:JSON.stringify({email,password:"correct horse battery staple"})
+  });
+  const [owner,admin,coach,member,stranger] = await Promise.all([
+    register("membership-owner@example.com"),register("membership-admin@example.com"),
+    register("membership-coach@example.com"),register("membership-member@example.com"),
+    register("membership-stranger@example.com")
+  ]);
+  for (const result of [owner,admin,coach,member,stranger]) assert.equal(result.status,201);
+  const userId = (result) => JSON.parse(Buffer.from(result.body.accessToken.split(".")[1],"base64url").toString("utf8")).sub;
+  const ownerId=userId(owner),adminId=userId(admin),coachId=userId(coach),memberId=userId(member),strangerId=userId(stranger);
+  const gym=await request(testServer.base,"/v1/tenants",{method:"POST",headers:{authorization:"Bearer "+owner.body.accessToken},body:JSON.stringify({name:"Member Lifecycle Fitness",slug:"member-lifecycle-fitness"})});
+  assert.equal(gym.status,201);
+  const tenantId=gym.body.tenant.id;
+  for(const [id,role] of [[adminId,"admin"],[coachId,"coach"],[memberId,"member"]]) testServer.repo.tenantMemberships.set(tenantId+":"+id,{tenant_id:tenantId,user_id:id,role,status:"active",joined_at:new Date().toISOString()});
+  const ownerHeaders={authorization:"Bearer "+owner.body.accessToken}, adminHeaders={authorization:"Bearer "+admin.body.accessToken}, coachHeaders={authorization:"Bearer "+coach.body.accessToken};
+  const suspended=await request(testServer.base,"/v1/tenants/"+tenantId+"/members/"+coachId,{method:"PATCH",headers:ownerHeaders,body:JSON.stringify({status:"suspended"})});
+  assert.equal(suspended.status,200); assert.equal(suspended.body.member.membership_status,"suspended");
+  const hidden=await request(testServer.base,"/v1/tenants",{headers:coachHeaders});
+  assert.equal(hidden.status,200); assert.equal(hidden.body.tenants.some((item)=>item.id===tenantId),false);
+  const restored=await request(testServer.base,"/v1/tenants/"+tenantId+"/members/"+coachId,{method:"PATCH",headers:ownerHeaders,body:JSON.stringify({status:"active"})});
+  assert.equal(restored.status,200); assert.equal(restored.body.member.membership_status,"active");
+  const roleChanged=await request(testServer.base,"/v1/tenants/"+tenantId+"/members/"+coachId,{method:"PATCH",headers:ownerHeaders,body:JSON.stringify({role:"member"})});
+  assert.equal(roleChanged.status,200); assert.equal(roleChanged.body.member.role,"member");
+  const forbidden=await request(testServer.base,"/v1/tenants/"+tenantId+"/members/"+memberId,{method:"PATCH",headers:adminHeaders,body:JSON.stringify({role:"admin"})});
+  assert.equal(forbidden.status,403);
+  const crossTenant=await request(testServer.base,"/v1/tenants/"+tenantId+"/members/"+strangerId,{method:"DELETE",headers:ownerHeaders});
+  assert.equal(crossTenant.status,404);
+  const removed=await request(testServer.base,"/v1/tenants/"+tenantId+"/members/"+memberId,{method:"DELETE",headers:ownerHeaders});
+  assert.equal(removed.status,200); assert.equal(removed.body.member.membership_status,"left");
+  const repeated=await request(testServer.base,"/v1/tenants/"+tenantId+"/members/"+memberId,{method:"DELETE",headers:ownerHeaders});
+  assert.equal(repeated.status,200); assert.equal(repeated.body.member.membership_status,"left");
+  const reactivation=await request(testServer.base,"/v1/tenants/"+tenantId+"/members/"+memberId,{method:"PATCH",headers:ownerHeaders,body:JSON.stringify({status:"active"})});
+  assert.equal(reactivation.status,409);
+  const ownerSuspension=await request(testServer.base,"/v1/tenants/"+tenantId+"/members/"+ownerId,{method:"PATCH",headers:ownerHeaders,body:JSON.stringify({status:"suspended"})});
+  assert.equal(ownerSuspension.status,409);
+  const ownerRemoval=await request(testServer.base,"/v1/tenants/"+tenantId+"/members/"+ownerId,{method:"DELETE",headers:ownerHeaders});
+  assert.equal(ownerRemoval.status,409);
+  const badStatus=await request(testServer.base,"/v1/tenants/"+tenantId+"/members/"+coachId,{method:"PATCH",headers:ownerHeaders,body:JSON.stringify({status:"left"})});
+  assert.equal(badStatus.status,400);
+  const badRole=await request(testServer.base,"/v1/tenants/"+tenantId+"/members/"+coachId,{method:"PATCH",headers:ownerHeaders,body:JSON.stringify({role:"owner"})});
+  assert.equal(badRole.status,400); assert.notEqual(ownerId,adminId);
+});
