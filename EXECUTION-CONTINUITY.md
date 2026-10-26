@@ -237,4 +237,15 @@ Verification evidence:
 Verification evidence:
 - CI run #495 passed on exact workspace/invitation client and personal-workspace authorization head `928c17035d21517992ed300df93081ecfffa7ad9`; frontend + backend tests, PostgreSQL migrations/schema verification, HTTP smoke, dependency audit, static checks and production build/output checks all passed. Run: https://github.com/shadow3k121212-rgb/Gym/actions/runs/37921703293.
 
-Phase 5 status: IN PROGRESS; do not treat GYM as production-ready multi-tenant until ownership transfer/offboarding, membership status administration, and tenant-scoped workout authorization/explicit coach visibility are implemented and tested.
+Phase 5 status: IN PROGRESS; do not treat GYM as production-ready multi-tenant until ownership transfer, explicit coach-to-athlete visibility, tenant-scoped workout authorization, and the remaining operational controls are implemented and tested.
+
+## Phase 5 follow-up slice — membership lifecycle (implementation committed; CI pending)
+- Added owner/admin-authorized APIs and UI for role changes, access suspension/reactivation, and non-destructive member offboarding.
+- Generic membership routes cannot modify owners; ownership transfer remains a dedicated future flow.
+- Admins cannot manage other admins or grant admin role; cross-workspace targets resolve as not found.
+- Offboarded memberships cannot be silently reactivated; re-entry requires a new invitation.
+- Private training history is untouched by workspace offboarding.
+- Added regression coverage for lifecycle behavior, role hierarchy, workspace isolation, owner protection, idempotent offboarding, and invalid inputs.
+- Static integrity gate now includes tenant migrations 010–012.
+
+A fresh full CI result is required before calling this slice complete.
