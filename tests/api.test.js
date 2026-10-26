@@ -312,6 +312,7 @@ test("uses authenticated tenant APIs with pagination and safe invitation methods
     if(String(url).includes("/members?")) body={members:[],nextCursor:null};
     else if(String(url).includes("/invitations?")) body={invitations:[],nextCursor:null};
     else if(String(url).endsWith("/tenant-invitations/accept")) body={tenant:{id:"t-1",role:"member"}};
+    else if(options.method==="POST"&&new URL(url).pathname.endsWith("/ownership-transfer")) body={transfer:{new_owner_user_id:"u-1"}};
     else if(options.method==="POST"&&String(url).endsWith("/invitations")) body={invitation:{id:"i-1"},developmentToken:"dev-token"};
     else if(options.method==="PATCH"&&new URL(url).pathname.includes("/members/")) body={member:{user_id:"u-1",role:"coach",membership_status:"suspended"}};
     else if(options.method==="DELETE"&&new URL(url).pathname.includes("/members/")) body={member:{user_id:"u-1",role:"coach",membership_status:"left"}};
@@ -324,7 +325,7 @@ test("uses authenticated tenant APIs with pagination and safe invitation methods
     const module=await import("../src/api.js?tenant-wrapper-test="+Date.now());
     module.setAuthSession("tenant-access-token","123e4567-e89b-12d3-a456-426614174000");
     const tenantId="123e4567-e89b-12d3-a456-426614174010";
-    const [tenants,members,updated,removed,invitations,created,issued,revoked,accepted]=await Promise.all([
+    const [tenants,members,updated,removed,invitations,created,issued,revoked,accepted,transferred]=await Promise.all([
       module.listTenants(),
       module.listTenantMembers(tenantId,50,"member.cursor"),
       module.updateTenantMember(tenantId,"123e4567-e89b-12d3-a456-426614174099",{status:"suspended"}),
@@ -333,7 +334,8 @@ test("uses authenticated tenant APIs with pagination and safe invitation methods
       module.createTenant("Central Fitness","central-fitness"),
       module.createTenantInvitation(tenantId,"coach@example.com","coach"),
       module.revokeTenantInvitation(tenantId,"123e4567-e89b-12d3-a456-426614174099"),
-      module.acceptTenantInvitation("opaque-invitation-token")
+      module.acceptTenantInvitation("opaque-invitation-token"),
+      module.transferTenantOwnership(tenantId,"123e4567-e89b-12d3-a456-426614174011")
     ]);
     assert.equal(tenants.ok,true);
     assert.equal(members.ok,true);
@@ -344,6 +346,7 @@ test("uses authenticated tenant APIs with pagination and safe invitation methods
     assert.equal(issued.ok,true);
     assert.equal(revoked.ok,true);
     assert.equal(accepted.ok,true);
+    assert.equal(transferred.ok,true);
     assert.match(calls.find(x=>x.url.includes("/members?")).url,/limit=50/);
     assert.match(calls.find(x=>x.url.includes("/members?")).url,/before=member.cursor/);
     assert.equal(calls.find(x=>x.url.endsWith("/invitations")&&x.options.method==="POST").options.method,"POST");
@@ -360,6 +363,9 @@ test("uses authenticated tenant APIs with pagination and safe invitation methods
     }
     const inviteCall=calls.find(x=>x.url.endsWith("/invitations")&&x.options.method==="POST");
     assert.deepEqual(JSON.parse(inviteCall.options.body),{email:"coach@example.com",role:"coach"});
+    const transferCall=calls.find(x=>new URL(x.url).pathname.endsWith("/ownership-transfer"));
+    assert.equal(transferCall.options.method,"POST");
+    assert.deepEqual(JSON.parse(transferCall.options.body),{targetUserId:"123e4567-e89b-12d3-a456-426614174011"});
     const acceptedCall=calls.find(x=>x.url.endsWith("/tenant-invitations/accept"));
     assert.deepEqual(JSON.parse(acceptedCall.options.body),{token:"opaque-invitation-token"});
   } finally {
