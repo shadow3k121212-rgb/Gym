@@ -1,0 +1,17 @@
+{
+  "name": "gym",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "node scripts/build.mjs",
+    "check": "node scripts/check.mjs",
+    "test": "node --test tests/*.test.js",
+    "test:all": "npm test && npm --prefix backend test",
+    "smoke": "node --test tests/smoke.test.mjs"
+  }
+}
