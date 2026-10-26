@@ -15,6 +15,8 @@ import {
   listTenants,
   createTenant,
   listTenantMembers,
+  updateTenantMember,
+  removeTenantMember,
   listTenantInvitations,
   createTenantInvitation,
   revokeTenantInvitation,
@@ -183,11 +185,27 @@ function renderTenantWorkspaceDetail() {
   const roleOptions = tenant.role === "owner"
     ? '<option value="member">Member</option><option value="coach">Coach</option><option value="admin">Admin</option>'
     : '<option value="member">Member</option><option value="coach">Coach</option>';
-  const memberRows = tenantMembers.length ? tenantMembers.map((member) =>
-    '<div class="session-row"><div><strong>' + escapeHtml(member.email) + '</strong>' +
-    '<span class="micro-note">' + escapeHtml(member.role) + ' · ' + escapeHtml(member.membership_status) + '</span></div>' +
-    '<span class="tag">' + escapeHtml(member.membership_status).toUpperCase() + '</span></div>'
-  ).join("") : '<div class="micro-note">No members found on this page.</div>';
+  const memberRows = tenantMembers.length ? tenantMembers.map((member) => {
+    const isSelf = member.user_id === getCurrentUserId();
+    const canManage = member.role !== "owner" && !isSelf && (tenant.role === "owner" || member.role !== "admin");
+    const roleChoices = tenant.role === "owner" ? ["member","coach","admin"] : ["member","coach"];
+    const roleOptions = roleChoices.map((role) =>
+      '<option value="' + role + '"' + (member.role === role ? ' selected' : '') + '>' + role.charAt(0).toUpperCase() + role.slice(1) + '</option>'
+    ).join("");
+    const status = member.membership_status;
+    const controls = canManage && status !== "left"
+      ? '<div class="tenant-row-actions tenant-member-actions">' +
+          '<label class="sr-only" for="tenant-member-role-' + escapeHtml(member.user_id) + '">Role for ' + escapeHtml(member.email) + '</label>' +
+          '<select class="text-input tenant-role-select" id="tenant-member-role-' + escapeHtml(member.user_id) + '" data-member-role data-member-id="' + escapeHtml(member.user_id) + '">' + roleOptions + '</select>' +
+          '<button class="text-button" data-tenant-action="update-member-role" data-member-id="' + escapeHtml(member.user_id) + '">Save role</button>' +
+          '<button class="text-button" data-tenant-action="set-member-status" data-member-id="' + escapeHtml(member.user_id) + '" data-next-status="' + (status === "active" ? "suspended" : "active") + '">' + (status === "active" ? "Suspend" : "Restore access") + '</button>' +
+          '<button class="text-button" data-tenant-action="remove-member" data-member-id="' + escapeHtml(member.user_id) + '">Remove</button>' +
+        '</div>'
+      : '';
+    return '<div class="session-row tenant-member-row"><div><strong>' + escapeHtml(member.email) + '</strong>' +
+      '<span class="micro-note">' + escapeHtml(member.role) + ' · ' + escapeHtml(status) + '</span></div>' +
+      '<div class="tenant-member-side"><span class="tag">' + escapeHtml(status).toUpperCase() + '</span>' + controls + '</div></div>';
+  }).join("") : '<div class="micro-note">No members found on this page.</div>';
   const invitationRows = tenantInvitations.length ? tenantInvitations.map((invite) =>
     '<div class="session-row"><div><strong>' + escapeHtml(invite.email) + '</strong>' +
     '<span class="micro-note">' + escapeHtml(invite.role) + ' · expires ' +
@@ -290,6 +308,52 @@ async function handleTenantAction(button) {
       announce(tenantActionMessage);
       return;
     }
+
+    if (action === "update-member-role") {
+      const memberId = button.dataset.memberId;
+      const roleSelect = Array.from(document.querySelectorAll("[data-member-role]")).find((input) => input.dataset.memberId === memberId);
+      if (!selectedTenantId || !memberId || !roleSelect) return announce("Choose a member role first.");
+      const result = await updateTenantMember(selectedTenantId, memberId, {role:roleSelect.value});
+      if (!result.ok) {
+        tenantActionMessage = result.message || "Member role could not be updated.";
+        renderTenantWorkspaceDetail();
+        return announce(tenantActionMessage);
+      }
+      const tenantId = selectedTenantId;
+      await loadTenantWorkspaceDetail(tenantId);
+      tenantActionMessage = "Workspace role updated.";
+      renderTenantWorkspaceDetail();
+      announce(tenantActionMessage);
+      return;
+    }
+    if (action === "set-member-status") {
+      const memberId = button.dataset.memberId;
+      const nextStatus = button.dataset.nextStatus;
+      if (!selectedTenantId || !memberId || !["active","suspended"].includes(nextStatus)) return;
+      const result = await updateTenantMember(selectedTenantId, memberId, {status:nextStatus});
+      if (!result.ok) return announce(result.message || "Member access could not be updated.");
+      const tenantId = selectedTenantId;
+      await loadTenantWorkspaceDetail(tenantId);
+      tenantActionMessage = nextStatus === "suspended" ? "Workspace access suspended." : "Workspace access restored.";
+      renderTenantWorkspaceDetail();
+      announce(tenantActionMessage);
+      return;
+    }
+    if (action === "remove-member") {
+      const memberId = button.dataset.memberId;
+      const member = tenantMembers.find((item) => item.user_id === memberId);
+      if (!selectedTenantId || !memberId || !member) return;
+      if (!window.confirm("Remove " + member.email + " from this workspace? Their account and private training history will not be deleted. They must accept a new invitation to rejoin.")) return;
+      const result = await removeTenantMember(selectedTenantId, memberId);
+      if (!result.ok) return announce(result.message || "Member could not be removed.");
+      const tenantId = selectedTenantId;
+      await loadTenantWorkspaceDetail(tenantId);
+      tenantActionMessage = "Member offboarded. Historical account data was preserved.";
+      renderTenantWorkspaceDetail();
+      announce(tenantActionMessage);
+      return;
+    }
+
     if (action === "revoke-invitation") {
       const invitationId = button.dataset.invitationId;
       if (!selectedTenantId || !invitationId) return;
