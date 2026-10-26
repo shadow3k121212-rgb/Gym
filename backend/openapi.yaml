@@ -161,6 +161,28 @@ paths:
         "200": { description: Tenant roster visible to an active owner or admin }
         "403": { description: Active member lacks roster-management permission }
         "404": { description: Workspace not found }
+  /v1/tenants/{tenantId}/ownership-transfer:
+    post:
+      security: [{ bearerAuth: [] }]
+      operationId: transferTenantOwnership
+      parameters:
+        - { in: path, name: tenantId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [targetUserId]
+              additionalProperties: false
+              properties:
+                targetUserId: { type: string, format: uuid }
+      responses:
+        "200": { description: Ownership transferred atomically; previous owner becomes an admin }
+        "400": { description: A valid target user ID is required }
+        "403": { description: Only an active workspace owner can transfer ownership }
+        "404": { description: Workspace not found }
+        "409": { description: Target must be an active member of the workspace }
   /v1/tenants/{tenantId}/members/{userId}:
     patch:
       security: [{ bearerAuth: [] }]
