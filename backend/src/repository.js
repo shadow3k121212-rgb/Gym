@@ -148,6 +148,62 @@ export class PostgresRepository {
   }
 
 
+
+  async transferTenantOwnership(actorUserId, tenantId, targetUserId) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("begin");
+      const actor = await this.requireTenantManager(actorUserId, tenantId, client, true);
+      if (actor.role !== "owner") {
+        const error = new Error("Only an active workspace owner can transfer ownership.");
+        error.code = "TENANT_OWNER_ONLY";
+        throw error;
+      }
+      if (actorUserId === targetUserId) {
+        const error = new Error("Choose another active workspace member to receive ownership.");
+        error.code = "TENANT_TRANSFER_TARGET_INVALID";
+        throw error;
+      }
+      const result = await client.query(
+        "select tm.tenant_id,tm.user_id,u.email,tm.role,tm.status as membership_status " +
+        "from tenant_memberships tm join users u on u.id=tm.user_id " +
+        "where tm.tenant_id=$1 and tm.user_id=$2 for update of tm",
+        [tenantId,targetUserId]
+      );
+      if (!result.rowCount || result.rows[0].membership_status !== "active") {
+        const error = new Error("Ownership can only be transferred to an active member of this workspace.");
+        error.code = "TENANT_TRANSFER_TARGET_INVALID";
+        throw error;
+      }
+      const target = result.rows[0];
+      // Promote first so the database-level last-owner guard never observes zero owners.
+      if (target.role !== "owner") {
+        await client.query(
+          "update tenant_memberships set role='owner',updated_at=now() where tenant_id=$1 and user_id=$2",
+          [tenantId,targetUserId]
+        );
+      }
+      await client.query(
+        "update tenant_memberships set role='admin',updated_at=now() where tenant_id=$1 and user_id=$2",
+        [tenantId,actorUserId]
+      );
+      await client.query("commit");
+      return {
+        tenant_id:tenantId,
+        previous_owner_user_id:actorUserId,
+        previous_owner_role:"admin",
+        new_owner_user_id:target.user_id,
+        new_owner_email:target.email,
+        role:"owner"
+      };
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async updateTenantMembership(actorUserId, tenantId, targetUserId, changes) {
     const client = await this.pool.connect();
     try {
