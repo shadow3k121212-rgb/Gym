@@ -46,4 +46,6 @@ Workspace API:
 - Production invitation delivery uses a configured HTTPS webhook; delivery failure revokes the just-created invitation.
 - Duplicate slugs return a conflict; malformed names/slugs return a client error.
 
-The invitation issuance/acceptance and management UI/API are implemented. This is still not a claim of production-ready multi-tenant workout sharing: ownership transfer, membership suspension/reactivation, explicit coach-to-athlete visibility, tenant-scoped training resources, billing and RLS defense-in-depth remain subsequent work.
+The invitation issuance/acceptance and management UI/API are implemented. Member management now supports owner/admin-controlled role changes, suspension/reactivation and offboarding. Owners cannot be modified through the generic membership endpoint; that remains blocked until a dedicated ownership-transfer flow exists. Offboarded memberships are terminal and must accept a fresh invitation before rejoining. Coach access to athlete history is still not implied by workspace membership.
+
+This is still not a claim of production-ready multi-tenant workout sharing: ownership transfer, explicit coach-to-athlete visibility, tenant-scoped training resources, billing, membership audit history and RLS defense-in-depth remain subsequent work.
