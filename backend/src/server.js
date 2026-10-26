@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createRefreshToken, getRefreshTtlSeconds, hashPassword, hashRefreshToken, refreshExpiry, verifyPassword, issueAccessToken, verifyAccessToken, extractBearerToken } from "./auth.js";
-import { ValidationError, normalizeEmail, validatePassword, validateSession, validateMovementEvent, validateTenantName, validateTenantSlug, slugifyTenantName, validateTenantInvitationRole } from "./validation.js";
+import { ValidationError, normalizeEmail, validatePassword, validateSession, validateMovementEvent, validateTenantName, validateTenantSlug, slugifyTenantName, validateTenantInvitationRole, validateTenantMembershipUpdate } from "./validation.js";
 import { decodeSessionCursor, normalizePageLimit, PaginationError } from "./pagination.js";
 
 const JSON_LIMIT = 256 * 1024;
@@ -343,6 +343,15 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
           return send(res, 200, { members:page.members, nextCursor:page.nextCursor }, { ...cors, "x-request-id":id });
         }
 
+
+        if (resource === "members" && rawResourceId && (req.method === "PATCH" || req.method === "DELETE")) {
+          if (!UUID_PATTERN.test(rawResourceId)) return okError(res, 400, "Invalid member user id.", id);
+          const targetUserId = rawResourceId.toLowerCase();
+          const changes = req.method === "DELETE" ? { status:"left" } : validateTenantMembershipUpdate(await readJson(req));
+          const member = await repo.updateTenantMembership(user.id, tenantId, targetUserId, changes);
+          return send(res, 200, { member }, { ...cors, "x-request-id":id });
+        }
+
         if (resource === "invitations" && !rawResourceId && req.method === "GET") {
           const params = new URL(req.url, "http://gym.local").searchParams;
           const limit = normalizePageLimit(params.get("limit"), 20, 100);
@@ -511,8 +520,8 @@ export function createApi({ repo, jwtSecret, corsOrigin = "*" }) {
       if (error?.code === "DUPLICATE_EMAIL") return okError(res, 409, "Email already registered.", id);
       if (error?.code === "TENANT_SLUG_CONFLICT") return okError(res, 409, "Workspace slug already exists. Choose a different slug.", id);
       if (error?.code === "TENANT_OWNER_REQUIRED") return okError(res, 409, error.message, id);
-      if (["FORBIDDEN","TENANT_ROLE_FORBIDDEN","INVITATION_EMAIL_MISMATCH","TENANT_MEMBERSHIP_SUSPENDED"].includes(error?.code)) return okError(res, 403, error.message, id);
-      if (["TENANT_MEMBERSHIP_EXISTS","TENANT_INVITATION_CONFLICT","TENANT_INVITATION_FINAL"].includes(error?.code)) return okError(res, 409, error.message, id);
+      if (["FORBIDDEN","TENANT_ROLE_FORBIDDEN","TENANT_SELF_MANAGEMENT","INVITATION_EMAIL_MISMATCH","TENANT_MEMBERSHIP_SUSPENDED"].includes(error?.code)) return okError(res, 403, error.message, id);
+      if (["TENANT_MEMBERSHIP_EXISTS","TENANT_INVITATION_CONFLICT","TENANT_INVITATION_FINAL","TENANT_OWNER_TRANSFER_REQUIRED","TENANT_MEMBERSHIP_FINAL"].includes(error?.code)) return okError(res, 409, error.message, id);
       if (error?.code === "INVALID_INVITATION") return okError(res, 400, error.message, id);
       if (error?.code === "NOT_FOUND") return okError(res, 404, error.message, id);
       const status = Number.isInteger(error?.statusCode) ? error.statusCode : 500;
