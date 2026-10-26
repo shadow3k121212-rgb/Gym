@@ -1237,3 +1237,54 @@ test("tenant membership administration enforces status, role, isolation, and off
   const badRole=await request(testServer.base,"/v1/tenants/"+tenantId+"/members/"+coachId,{method:"PATCH",headers:ownerHeaders,body:JSON.stringify({role:"owner"})});
   assert.equal(badRole.status,400); assert.notEqual(ownerId,adminId);
 });
+
+
+test("workspace ownership transfer is owner-only and requires an active existing member", async (t) => {
+  const testServer = await makeServer();
+  t.after(() => testServer.server.close());
+  const register = (email) => request(testServer.base,"/v1/auth/register",{
+    method:"POST",body:JSON.stringify({email,password:"correct horse battery staple"})
+  });
+  const [owner,admin,member,suspended,stranger] = await Promise.all([
+    register("transfer-owner@example.com"),register("transfer-admin@example.com"),
+    register("transfer-member@example.com"),register("transfer-suspended@example.com"),
+    register("transfer-stranger@example.com")
+  ]);
+  for (const result of [owner,admin,member,suspended,stranger]) assert.equal(result.status,201);
+  const userId = (result) => JSON.parse(Buffer.from(result.body.accessToken.split(".")[1],"base64url").toString("utf8")).sub;
+  const ownerId=userId(owner),adminId=userId(admin),memberId=userId(member),suspendedId=userId(suspended),strangerId=userId(stranger);
+  const gym=await request(testServer.base,"/v1/tenants",{
+    method:"POST",headers:{authorization:"Bearer "+owner.body.accessToken},
+    body:JSON.stringify({name:"Ownership Transfer Fitness",slug:"ownership-transfer-fitness"})
+  });
+  assert.equal(gym.status,201);
+  const tenantId=gym.body.tenant.id;
+  for(const [id,role,status] of [[adminId,"admin","active"],[memberId,"member","active"],[suspendedId,"coach","suspended"]]) {
+    testServer.repo.tenantMemberships.set(tenantId+":"+id,{tenant_id:tenantId,user_id:id,role,status,joined_at:new Date().toISOString()});
+  }
+  const path="/v1/tenants/"+tenantId+"/ownership-transfer";
+  const ownerHeaders={authorization:"Bearer "+owner.body.accessToken};
+  const adminHeaders={authorization:"Bearer "+admin.body.accessToken};
+  const memberHeaders={authorization:"Bearer "+member.body.accessToken};
+  const adminDenied=await request(testServer.base,path,{method:"POST",headers:adminHeaders,body:JSON.stringify({targetUserId:memberId})});
+  assert.equal(adminDenied.status,403);
+  const self=await request(testServer.base,path,{method:"POST",headers:ownerHeaders,body:JSON.stringify({targetUserId:ownerId})});
+  assert.equal(self.status,409);
+  const outsider=await request(testServer.base,path,{method:"POST",headers:ownerHeaders,body:JSON.stringify({targetUserId:strangerId})});
+  assert.equal(outsider.status,409);
+  const suspendedTarget=await request(testServer.base,path,{method:"POST",headers:ownerHeaders,body:JSON.stringify({targetUserId:suspendedId})});
+  assert.equal(suspendedTarget.status,409);
+  const transferred=await request(testServer.base,path,{method:"POST",headers:ownerHeaders,body:JSON.stringify({targetUserId:memberId})});
+  assert.equal(transferred.status,200);
+  assert.equal(transferred.body.transfer.new_owner_user_id,memberId);
+  assert.equal(transferred.body.transfer.previous_owner_user_id,ownerId);
+  const oldOwnerWorkspaces=await request(testServer.base,"/v1/tenants",{headers:ownerHeaders});
+  const newOwnerWorkspaces=await request(testServer.base,"/v1/tenants",{headers:memberHeaders});
+  assert.equal(oldOwnerWorkspaces.body.tenants.find((item)=>item.id===tenantId).role,"admin");
+  assert.equal(newOwnerWorkspaces.body.tenants.find((item)=>item.id===tenantId).role,"owner");
+  const formerOwnerCannotTransfer=await request(testServer.base,path,{method:"POST",headers:ownerHeaders,body:JSON.stringify({targetUserId:suspendedId})});
+  assert.equal(formerOwnerCannotTransfer.status,403);
+  const invalidTarget=await request(testServer.base,path,{method:"POST",headers:adminHeaders,body:JSON.stringify({targetUserId:"not-a-uuid"})});
+  assert.equal(invalidTarget.status,400);
+  assert.notEqual(ownerId,adminId);
+});
