@@ -161,6 +161,41 @@ paths:
         "200": { description: Tenant roster visible to an active owner or admin }
         "403": { description: Active member lacks roster-management permission }
         "404": { description: Workspace not found }
+  /v1/tenants/{tenantId}/members/{userId}:
+    patch:
+      security: [{ bearerAuth: [] }]
+      operationId: updateTenantMember
+      parameters:
+        - { in: path, name: tenantId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: userId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              additionalProperties: false
+              properties:
+                role: { type: string, enum: [admin, coach, member] }
+                status: { type: string, enum: [active, suspended] }
+      responses:
+        "200": { description: Workspace member updated }
+        "400": { description: Invalid role, status, or member id }
+        "403": { description: Actor lacks permission, or is attempting to manage an admin without being an owner }
+        "404": { description: Workspace or member not found }
+        "409": { description: Ownership transfer required, or an offboarded member must accept a new invitation }
+    delete:
+      security: [{ bearerAuth: [] }]
+      operationId: removeTenantMember
+      parameters:
+        - { in: path, name: tenantId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: userId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Member offboarded; access is removed without deleting historical account data }
+        "403": { description: Actor lacks permission }
+        "404": { description: Workspace or member not found }
+        "409": { description: Workspace ownership transfer is required before an owner can be removed }
   /v1/tenants/{tenantId}/invitations:
     get:
       security: [{ bearerAuth: [] }]
