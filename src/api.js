@@ -258,6 +258,14 @@ export function removeTenantMember(tenantId, userId) {
   return request("/v1/tenants/" + encodeURIComponent(tenantId) + "/members/" + encodeURIComponent(userId), {method:"DELETE"});
 }
 
+export function transferTenantOwnership(tenantId, targetUserId) {
+  if (!apiBaseUrl || !hasAuth() || typeof tenantId !== "string" || !tenantId || typeof targetUserId !== "string" || !targetUserId) return tenantRequestUnavailable();
+  return request("/v1/tenants/" + encodeURIComponent(tenantId) + "/ownership-transfer", {
+    method:"POST",
+    body:JSON.stringify({targetUserId})
+  });
+}
+
 export function listTenantInvitations(tenantId, limit = 20, cursor = null) {
   if (!apiBaseUrl || !hasAuth() || typeof tenantId !== "string" || !tenantId) return tenantRequestUnavailable();
   return request(tenantPagePath("/v1/tenants/" + encodeURIComponent(tenantId) + "/invitations",limit,cursor));
