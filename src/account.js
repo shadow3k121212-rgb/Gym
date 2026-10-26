@@ -17,6 +17,7 @@ import {
   listTenantMembers,
   updateTenantMember,
   removeTenantMember,
+  transferTenantOwnership,
   listTenantInvitations,
   createTenantInvitation,
   revokeTenantInvitation,
@@ -193,6 +194,9 @@ function renderTenantWorkspaceDetail() {
       '<option value="' + role + '"' + (member.role === role ? ' selected' : '') + '>' + role.charAt(0).toUpperCase() + role.slice(1) + '</option>'
     ).join("");
     const status = member.membership_status;
+    const transferControl = tenant.role === "owner" && !isSelf && status === "active"
+      ? '<button class="text-button" data-tenant-action="transfer-ownership" data-member-id="' + escapeHtml(member.user_id) + '">Transfer ownership</button>'
+      : '';
     const controls = canManage && status !== "left"
       ? '<div class="tenant-row-actions tenant-member-actions">' +
           '<label class="sr-only" for="tenant-member-role-' + escapeHtml(member.user_id) + '">Role for ' + escapeHtml(member.email) + '</label>' +
@@ -204,7 +208,7 @@ function renderTenantWorkspaceDetail() {
       : '';
     return '<div class="session-row tenant-member-row"><div><strong>' + escapeHtml(member.email) + '</strong>' +
       '<span class="micro-note">' + escapeHtml(member.role) + ' · ' + escapeHtml(status) + '</span></div>' +
-      '<div class="tenant-member-side"><span class="tag">' + escapeHtml(status).toUpperCase() + '</span>' + controls + '</div></div>';
+      '<div class="tenant-member-side"><span class="tag">' + escapeHtml(status).toUpperCase() + '</span>' + controls + transferControl + '</div></div>';
   }).join("") : '<div class="micro-note">No members found on this page.</div>';
   const invitationRows = tenantInvitations.length ? tenantInvitations.map((invite) =>
     '<div class="session-row"><div><strong>' + escapeHtml(invite.email) + '</strong>' +
@@ -354,6 +358,21 @@ async function handleTenantAction(button) {
       return;
     }
 
+
+    if (action === "transfer-ownership") {
+      const memberId = button.dataset.memberId;
+      const member = tenantMembers.find((item) => item.user_id === memberId);
+      if (!selectedTenantId || !memberId || !member || tenant.role !== "owner") return;
+      if (!window.confirm("Transfer ownership of " + tenant.name + " to " + member.email + "? Your role will become admin. This action changes who can manage ownership and cannot be undone by the former owner.")) return;
+      const tenantId = selectedTenantId;
+      const result = await transferTenantOwnership(tenantId, memberId);
+      if (!result.ok) return announce(result.message || "Ownership transfer failed.");
+      await loadTenantWorkspaces();
+      tenantActionMessage = "Ownership transferred to " + member.email + ". Your workspace role is now admin.";
+      renderTenantWorkspaceDetail();
+      announce(tenantActionMessage);
+      return;
+    }
     if (action === "revoke-invitation") {
       const invitationId = button.dataset.invitationId;
       if (!selectedTenantId || !invitationId) return;
