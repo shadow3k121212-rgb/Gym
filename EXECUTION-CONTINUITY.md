@@ -239,9 +239,9 @@ Verification evidence:
 
 Phase 5 status: IN PROGRESS; do not treat GYM as production-ready multi-tenant until ownership transfer, explicit coach-to-athlete visibility, tenant-scoped workout authorization, and the remaining operational controls are implemented and tested.
 
-## Phase 5 follow-up slice — membership lifecycle (implementation committed; CI pending)
+## Phase 5 follow-up slice — membership lifecycle (CI verified)
 - Added owner/admin-authorized APIs and UI for role changes, access suspension/reactivation, and non-destructive member offboarding.
-- Generic membership routes cannot modify owners; ownership transfer remains a dedicated future flow.
+- Generic membership routes cannot modify owners; the dedicated ownership-transfer flow promotes an active target first, then demotes the previous owner, preserving the database last-owner invariant.
 - Admins cannot manage other admins or grant admin role; cross-workspace targets resolve as not found.
 - Offboarded memberships cannot be silently reactivated; re-entry requires a new invitation.
 - Private training history is untouched by workspace offboarding.
@@ -253,3 +253,13 @@ Verification evidence:
 - The API, in-memory repository parity, OpenAPI contract, settings controls, and regression tests were present on the tested head.
 
 Membership lifecycle slice status: COMPLETE for the implemented scope. Phase 5 overall remains IN PROGRESS because ownership transfer, explicit coach-to-athlete visibility, tenant-scoped training resources, billing, audit history, and production RLS/operations still remain.
+
+## Phase 5 follow-up slice — ownership transfer (CI verified)
+- Added a dedicated owner-only `POST /v1/tenants/:tenantId/ownership-transfer` route; generic member edits still cannot create/remove ownership.
+- Transfer target must be an active member of the same gym; suspended, offboarded, non-member, self, and non-owner requests are rejected.
+- PostgreSQL implementation runs in a transaction and promotes the target owner before demoting the previous owner, which preserves the database guard against a gym with no active owner.
+- The previous owner becomes an admin; team membership and personal workout history are retained.
+- Added in-memory repository parity, OpenAPI contract, account-settings confirmation flow, client API wrapper, and regression tests.
+- CI run #542 passed on exact implementation head `8276a89489974e442620d5e73abb8c5841dd8126`; unit/API tests, migrations/schema checks, HTTP smoke, dependency audit, static checks, production build and output verification passed. Run: https://github.com/shadow3k121212-rgb/Gym/actions/runs/40348800826.
+
+Ownership transfer slice status: COMPLETE for the defined scope. Phase 5 overall remains IN PROGRESS; explicit coach-to-athlete consent/visibility and tenant-scoped workout access are the next security-critical slices.
