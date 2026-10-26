@@ -147,6 +147,37 @@ export class PostgresRepository {
     };
   }
 
+
+  async updateTenantMembership(actorUserId, tenantId, targetUserId, changes) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("begin");
+      const actor = await this.requireTenantManager(actorUserId, tenantId, client, true);
+      const found = await client.query(
+        "select tm.tenant_id,tm.user_id,u.email,tm.role,tm.status as membership_status,tm.joined_at " +
+        "from tenant_memberships tm join users u on u.id=tm.user_id " +
+        "where tm.tenant_id=$1 and tm.user_id=$2 for update of tm",
+        [tenantId, targetUserId]
+      );
+      if (!found.rowCount) { const error = new Error("Workspace member not found."); error.code = "NOT_FOUND"; throw error; }
+      const member = found.rows[0];
+      if (member.role === "owner") { const error = new Error("Workspace owners can only be changed through a dedicated ownership-transfer flow."); error.code = "TENANT_OWNER_TRANSFER_REQUIRED"; throw error; }
+      if (actorUserId === targetUserId) { const error = new Error("You cannot change or remove your own workspace membership through this endpoint."); error.code = "TENANT_SELF_MANAGEMENT"; throw error; }
+      if (actor.role === "admin" && (member.role === "admin" || changes.role === "admin")) { const error = new Error("Only an owner may manage admin roles or memberships."); error.code = "TENANT_ROLE_FORBIDDEN"; throw error; }
+      if (member.membership_status === "left") {
+        if (changes.status === "left" && changes.role === undefined) { await client.query("commit"); return member; }
+        const error = new Error("An offboarded member must accept a new invitation before rejoining."); error.code = "TENANT_MEMBERSHIP_FINAL"; throw error;
+      }
+      const nextRole = changes.role ?? member.role;
+      const nextStatus = changes.status ?? member.membership_status;
+      await client.query("update tenant_memberships set role=$3,status=$4,updated_at=now() where tenant_id=$1 and user_id=$2", [tenantId, targetUserId, nextRole, nextStatus]);
+      member.role = nextRole; member.membership_status = nextStatus;
+      await client.query("commit");
+      return member;
+    } catch (error) { await client.query("rollback"); throw error; }
+    finally { client.release(); }
+  }
+
   async listTenantInvitations(actorUserId, tenantId, { limit = 20, before = null } = {}) {
     await this.requireTenantManager(actorUserId,tenantId);
     const params = [tenantId];
